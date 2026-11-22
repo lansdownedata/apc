@@ -4,7 +4,7 @@
   Trip detail (mockup 3): when and where it stands, the progress line, then the itinerary
   beside the charges. `trip` is the `customers.trip_detail.trip_detail` dict. "Your
   reference" saves in place through `customers:set_reference` (`customerReference()`,
-  static/js/app.js). Request a change and Request to cancel (mockups 6 and 7) open the
+  static/js/app.js) each time the field is left, so a save that failed is tried again. Request a change and Request to cancel (mockups 6 and 7) open the
   shared modal with the form in their <template> (`customerAsk()`; `?ask=change` opens
   the change one on load); while one is with staff its button reads "Change requested
   Nov 20". Booked trips only: a quote or a deposit being confirmed shows the dispatch
@@ -21,11 +21,11 @@
   <div class="mt-2.5 flex flex-col-reverse gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
     <div class="min-w-0">
       <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
-        {{ trip.heading }}{% if trip.heading_zone %} <span class="whitespace-nowrap font-sans text-[15px] font-medium text-muted sm:text-[16px]">{{ trip.heading_zone }}</span>{% endif %}
+        {{ trip.heading }}{% if trip.heading_zone %} <span class="whitespace-nowrap font-sans text-[15px] font-medium text-muted">{{ trip.heading_zone }}</span>{% endif %}
       </h1>
-      <p class="mt-1 text-[13.5px] text-muted num">
-        {% if trip.when_note %}{{ trip.when_note }} · {% endif %}{% if trip.confirmation %}Confirmation {{ trip.confirmation }}{% endif %}
-      </p>
+      {% if trip.when_note or trip.confirmation %}
+      <p class="mt-1 text-[13.5px] text-muted num">{{ trip.when_note }}{% if trip.when_note and trip.confirmation %} · {% endif %}{% if trip.confirmation %}Confirmation {{ trip.confirmation }}{% endif %}</p>
+      {% endif %}
     </div>
     <div class="shrink-0 sm:mt-2">{% include "customers/_status.html" with row=trip %}</div>
   </div>
@@ -52,7 +52,7 @@
         {% for stop in trip.stops %}
         <li class="relative pb-4 last:pb-0">
           <span aria-hidden="true" class="absolute -left-[22px] top-[5px] h-3 w-3 rounded-full border-2 border-ink {% if forloop.last and not forloop.first %}bg-ink{% else %}bg-surface{% endif %}"></span>
-          <p class="text-[14px] font-semibold text-ink [overflow-wrap:anywhere]">{{ stop.title }}</p>
+          <p class="text-[13.5px] font-semibold text-ink [overflow-wrap:anywhere]">{{ stop.title }}</p>
           {% if stop.address %}<p class="text-[12.5px] text-muted [overflow-wrap:anywhere]">{{ stop.address }}</p>{% endif %}
           <p class="mt-0.5 text-[12.5px] text-muted num">{{ stop.detail }}</p>
         </li>
@@ -69,16 +69,16 @@
         </div>
         <div>
           <dt class="text-[12.5px] text-muted">Passengers</dt>
-          <dd class="mt-0.5 text-[13.5px] font-semibold text-ink [overflow-wrap:anywhere]">{% if trip.passengers %}{{ trip.passengers|join:", " }}{% else %}{{ trip.passenger_count }} passenger{{ trip.passenger_count|pluralize }}{% endif %}</dd>
+          <dd class="mt-0.5 text-[13.5px] font-semibold text-ink [overflow-wrap:anywhere]">{{ trip.passengers_text }}</dd>
         </div>
         {% if trip.driver or trip.driver_pending %}
         <div>
           <dt class="text-[12.5px] text-muted">Driver</dt>
           {% if trip.driver %}
           <dd class="mt-0.5 text-[13.5px] font-semibold text-ink">{{ trip.driver.name }}</dd>
-          {% if trip.driver.cell %}<dd><a href="tel:{{ trip.driver.cell.tel }}" class="rounded text-[13px] font-semibold text-goldd focus-gold hover:underline num">{{ trip.driver.cell.display }}</a></dd>{% endif %}
+          {% if trip.driver.cell %}<dd><a href="tel:{{ trip.driver.cell.tel }}" class="rounded text-[13.5px] font-semibold text-goldd focus-gold hover:underline num">{{ trip.driver.cell.display }}</a></dd>{% endif %}
           {% else %}
-          <dd class="mt-0.5 text-[13px] text-muted">{{ trip.driver_pending }}</dd>
+          <dd class="mt-0.5 text-[12.5px] text-muted">{{ trip.driver_pending }}</dd>
           {% endif %}
         </div>
         {% endif %}
@@ -95,40 +95,42 @@
     {% if trip.can_request %}
     <div class="flex flex-wrap gap-2" x-data="customerAsk()">
       {% if trip.pending_change %}
-      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Change requested {{ trip.pending_change }}</span>
+      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13.5px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Change requested {{ trip.pending_change }}</span>
       {% else %}
       <button type="button" @click="open('change')" class="inline-flex h-10 items-center rounded-lg border border-line bg-surface px-4 text-[13.5px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold">Request a change</button>
       <template id="ask-change" data-url="{% url 'customers:ask_change' trip.pk %}" data-title="Request a change" data-confirm="Send request" data-cancel="Keep trip as is" data-variant="gold">{% include "customers/_request_change.html" %}</template>
       {% endif %}
       {% if trip.pending_cancel %}
-      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Cancellation requested {{ trip.pending_cancel }}</span>
+      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13.5px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Cancellation requested {{ trip.pending_cancel }}</span>
       {% else %}
       <button type="button" @click="open('cancel')" class="inline-flex h-10 items-center rounded-lg border border-line bg-surface px-4 text-[13.5px] font-semibold text-rose-700 transition-colors hover:bg-surface2 focus-gold">Request to cancel</button>
       <template id="ask-cancel" data-url="{% url 'customers:ask_cancel' trip.pk %}" data-title="Request to cancel" data-confirm="Send cancellation request" data-cancel="Keep my trip" data-variant="danger">{% include "customers/_request_cancel.html" %}</template>
       {% endif %}
     </div>
     {% elif trip.call_dispatch %}
-    <p class="text-[13px] text-muted">Need to change or cancel this? Call dispatch at <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
+    <p class="text-[13.5px] text-muted">{{ trip.call_dispatch }} <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
     {% endif %}
     </div>
 
     <section class="card p-5 sm:p-6" aria-labelledby="charges">
       <h2 id="charges" class="text-[15px] font-semibold text-ink">Charges</h2>
       {% if trip.total is None %}
-      <p class="mt-3 text-[13.5px] leading-relaxed text-muted">We're preparing your quote.</p>
+      <p class="mt-3 text-[13.5px] leading-relaxed text-muted">{{ trip.charges_note }}</p>
       {% else %}
-      <dl class="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 text-[13.5px] text-ink num">
+      <dl class="mt-3 space-y-2 text-[13.5px] text-ink num">
         {% for line in trip.price_lines %}
-        <dt>{{ line.label }}</dt>
-        <dd class="text-right">{% if line.amount < 0 %}&minus;{% endif %}${{ line.abs_amount|floatformat:2|intcomma }}</dd>
+        <div class="flex items-baseline justify-between gap-4">
+          <dt class="min-w-0">{{ line.label }}</dt>
+          <dd class="shrink-0">{% if line.amount < 0 %}&minus;{% endif %}${{ line.abs_amount|floatformat:2|intcomma }}</dd>
+        </div>
         {% endfor %}
-        <div class="col-span-2 flex items-baseline justify-between gap-4 text-[15px] font-bold {% if trip.price_lines %}border-t border-line pt-2.5{% endif %}">
+        <div class="flex items-baseline justify-between gap-4 text-[15px] font-bold {% if trip.price_lines %}border-t border-line pt-2.5{% endif %}">
           <dt>Total</dt>
           <dd>${{ trip.total|floatformat:2|intcomma }}</dd>
         </div>
       </dl>
       {% if trip.paid_line %}
-      <p class="mt-3.5"><span class="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12px] font-semibold {% if trip.paid_line == 'Paid in full' %}chip-ok{% elif trip.paid_line == 'Deposit paid' %}chip-gold{% else %}bg-surface2 text-muted{% endif %}">{{ trip.paid_line }}</span></p>
+      <p class="mt-3.5"><span class="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[12.5px] font-semibold {% if trip.paid_tone == 'ok' %}chip-ok{% elif trip.paid_tone == 'gold' %}chip-gold{% else %}bg-surface2 text-muted{% endif %}">{{ trip.paid_line }}</span></p>
       {% endif %}
       {% endif %}
 
@@ -140,11 +142,11 @@
         <label for="trip-reference" class="block text-[12.5px] font-semibold text-ink">Your reference</label>
         <input id="trip-reference" x-ref="input" type="text" maxlength="120" autocomplete="off"
                value="{{ trip.reference }}" placeholder="Add reference" class="field mt-1.5"
-               :aria-busy="saving" @change="save()" @keydown.enter.prevent="$el.blur()">
+               :aria-busy="saving" :aria-invalid="failed" @blur="save()" @keydown.enter.prevent="$el.blur()">
         <p class="mt-1.5 text-[12.5px] text-muted">Prints on your receipt.</p>
       </div>
       {% if trip.has_receipt %}
-      <a href="{% url 'customers:receipt' trip.pk %}" class="mt-4 inline-flex h-9 items-center rounded-lg bg-onyx px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 focus-gold">Download receipt</a>
+      <a href="{% url 'customers:receipt' trip.pk %}" class="mt-4 inline-flex h-9 items-center rounded-lg bg-onyx px-4 text-[13.5px] font-semibold text-white transition-opacity hover:opacity-90 focus-gold">Download receipt</a>
       {% elif trip.receipt_pending %}
       <p class="mt-4 text-[12.5px] text-muted">Receipt available once your trip is finalized.</p>
       {% endif %}

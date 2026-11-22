@@ -17,6 +17,8 @@
   </div>
   {% endif %}
 
+  {% if has_trips and not next_trip %}<h1 class="sr-only">Your trips</h1>{% endif %}
+
   {% if next_trip %}
   {% url 'customers:trip' next_trip.pk as next_url %}
   <section class="card p-5 sm:p-6" aria-labelledby="next-trip">
@@ -24,8 +26,9 @@
       <div class="min-w-0">
         <p id="next-trip" class="text-[12.5px] font-semibold text-muted">Your next trip</p>
         <h1 class="mt-1.5 font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">
-          {{ next_trip.long_date }} at <span class="whitespace-nowrap">{{ next_trip.time }} <span class="font-sans text-[15px] font-medium text-muted sm:text-[16px]">{{ next_trip.zone }}</span></span>
+          {{ next_trip.heading }}{% if next_trip.heading_zone %} <span class="whitespace-nowrap font-sans text-[15px] font-medium text-muted sm:text-[16px]">{{ next_trip.heading_zone }}</span>{% endif %}
         </h1>
+        {% if next_trip.when_note %}<p class="mt-1 text-[13.5px] text-muted num">{{ next_trip.when_note }}</p>{% endif %}
         <p class="mt-2.5 text-[15px] font-semibold text-ink [overflow-wrap:anywhere]">{{ next_trip.route }}</p>
         <p class="mt-1 text-[13.5px] leading-relaxed text-muted">{{ next_trip.summary }}</p>
       </div>

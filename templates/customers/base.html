@@ -4,7 +4,6 @@
   The customer portal's shell: the public site's, with a slim header in place of the
   marketing nav. Logo and the dispatch number always; Home / Trips / Account, Request a
   trip and Sign out only when signed in (`signed_in`, set by `customers.views._page`).
-  A nav link appears once its page exists: the url tag's `as` form is blank for a missing route.
 {% endcomment %}
 {% block meta %}
 <title>{% block title %}Your account{% endblock %} · All Pro Charter</title>
@@ -14,7 +13,6 @@
 {% block head_extra %}<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">{% endblock %}
 
 {% block header %}
-{% url 'customers:trips' as trips_url %}{% url 'customers:account' as account_url %}{% url 'customers:request_trip' as request_url %}
 {% with name=request.resolver_match.url_name %}
 <header class="sticky top-0 z-50 border-b border-line bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75">
   <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
@@ -27,10 +25,10 @@
     <nav class="hidden items-center gap-5 text-[13.5px] font-medium text-muted sm:flex" aria-label="Your account">
       <a href="{% url 'customers:home' %}" {% if name == 'home' %}aria-current="page"{% endif %}
          class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'home' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Home</a>
-      {% if trips_url %}<a href="{{ trips_url }}" {% if name == 'trips' or name == 'trip' %}aria-current="page"{% endif %}
-         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'trips' or name == 'trip' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Trips</a>{% endif %}
-      {% if account_url %}<a href="{{ account_url }}" {% if name == 'account' %}aria-current="page"{% endif %}
-         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'account' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Account</a>{% endif %}
+      <a href="{% url 'customers:trips' %}" {% if name == 'trips' or name == 'trip' %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'trips' or name == 'trip' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Trips</a>
+      <a href="{% url 'customers:account' %}" {% if name == 'account' %}aria-current="page"{% endif %}
+         class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'account' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Account</a>
     </nav>
     {% endif %}
     <a href="tel:{{ dispatch.tel }}" aria-label="Call dispatch, {{ dispatch.display }}"
@@ -38,7 +36,7 @@
       {% icon "phone" class="h-4 w-4 text-goldd" %}<span class="hidden md:inline">Dispatch</span><span class="num {% if signed_in %}hidden sm:inline{% endif %}">{{ dispatch.display }}</span>
     </a>
     {% if signed_in %}
-    {% if request_url and can_request %}<a href="{{ request_url }}" class="btn-gold inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[12.5px] font-semibold focus-gold">Request a trip</a>{% endif %}
+    {% if can_request %}<a href="{% url 'customers:request_trip' %}" class="btn-gold inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[12.5px] font-semibold focus-gold">Request a trip</a>{% endif %}
     <form method="post" action="{% url 'customers:logout' %}">
       {% csrf_token %}
       <button type="submit" aria-label="Sign out"
@@ -52,10 +50,10 @@
   <nav class="flex gap-6 border-t border-line px-4 text-[13.5px] font-medium text-muted sm:hidden" aria-label="Your account">
     <a href="{% url 'customers:home' %}" {% if name == 'home' %}aria-current="page"{% endif %}
        class="border-b-2 py-2.5 focus-gold {% if name == 'home' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Home</a>
-    {% if trips_url %}<a href="{{ trips_url }}" {% if name == 'trips' or name == 'trip' %}aria-current="page"{% endif %}
-       class="border-b-2 py-2.5 focus-gold {% if name == 'trips' or name == 'trip' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Trips</a>{% endif %}
-    {% if account_url %}<a href="{{ account_url }}" {% if name == 'account' %}aria-current="page"{% endif %}
-       class="border-b-2 py-2.5 focus-gold {% if name == 'account' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Account</a>{% endif %}
+    <a href="{% url 'customers:trips' %}" {% if name == 'trips' or name == 'trip' %}aria-current="page"{% endif %}
+       class="border-b-2 py-2.5 focus-gold {% if name == 'trips' or name == 'trip' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Trips</a>
+    <a href="{% url 'customers:account' %}" {% if name == 'account' %}aria-current="page"{% endif %}
+       class="border-b-2 py-2.5 focus-gold {% if name == 'account' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Account</a>
   </nav>
   {% endif %}
 </header>

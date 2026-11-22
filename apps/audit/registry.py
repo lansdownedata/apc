@@ -116,6 +116,13 @@ def _vendor_child_parents(row: Model) -> dict:
     return {"profile": _profile("vendor", row.vendor_id)}
 
 
+def _customer_request_label(request: Model) -> str:
+    """ "Change request: Date or time, Flight" / "Cancellation request: Plans changed"."""
+    about = request.topics or request.reason
+    head = f"{request.get_kind_display()} request"
+    return f"{head}: {about}" if about else head
+
+
 def _extra_label(extra: Model) -> str:
     return f"{extra.label or extra.get_kind_display()} {display.money(extra.amount)}"
 
@@ -396,11 +403,47 @@ SPECS: list[ModelSpec] = [
         label=lambda account: account.email,
     ),
     ModelSpec(
+        model="customers.CustomerAccount",
+        exclude=(
+            "password",
+            "last_login",
+            "last_seen_at",
+            "history_banner_seen_at",
+            "failed_logins",
+            "locked_until",
+            "invited_by",
+            "revoked_by",
+        ),
+        labels={
+            "invited_at": "Invite sent",
+            "registered_at": "Signed up",
+            "revoked_at": "Access revoked",
+            "self_registered": "Signed up on their own",
+            "verified_email": "Proved email",
+        },
+        parents=_contact_child_parents,
+        label=lambda account: account.email or "Customer portal account",
+        sentences={
+            "registered_at": "Signed up to the customer portal",
+            "revoked_at": "Revoked customer portal access",
+        },
+    ),
+    ModelSpec(
         model="planners.PlannerRequest",
         exclude=("message", "task"),
         parents=_order_child_parents,
         label=lambda request: f"Planner request: {request.about}",
         sentences={"create": 'Planner request: "{about}"'},
+    ),
+    ModelSpec(
+        model="customers.CustomerRequest",
+        exclude=("message", "task"),
+        parents=lambda request: {
+            "trip_id": request.reservation_id,
+            "order_id": _through(request, "reservation__lead_id"),
+        },
+        label=_customer_request_label,
+        sentences={"create": "Customer asked to {kind} this trip"},
     ),
 ]
 

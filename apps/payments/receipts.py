@@ -78,8 +78,40 @@ def _money(value: Decimal) -> str:
     return f"−${-value:,.2f}" if value < 0 else f"${value:,.2f}"
 
 
+# Stripe's `card.brand` values, as the customer knows the card.
+_CARD_BRANDS = {
+    "amex": "American Express",
+    "american express": "American Express",
+    "cartes_bancaires": "Cartes Bancaires",
+    "diners": "Diners Club",
+    "diners club": "Diners Club",
+    "discover": "Discover",
+    "eftpos_au": "Eftpos Australia",
+    "jcb": "JCB",
+    "mastercard": "Mastercard",
+    "unionpay": "UnionPay",
+    "visa": "Visa",
+}
+
+
+def card_brand(brand: str) -> str:
+    """A card brand as its holder knows it ("amex" -> "American Express"). One Stripe adds
+    later reads as its words ("some_brand" -> "Some Brand"); none, or Stripe's "unknown",
+    as "Card". The one rule wherever a card is named, to customers and to staff."""
+    key = (brand or "").strip().lower()
+    name = _CARD_BRANDS.get(key)
+    if name is None:
+        name = "" if key == "unknown" else key.replace("_", " ").title()
+    return name or "Card"
+
+
+def card_label(brand: str, last4: str) -> str:
+    """ "Visa ••4242"; blank without a last four."""
+    return f"{card_brand(brand)} ••{last4}" if last4 else ""
+
+
 def _card(row: Charge) -> str:
-    return f"{row.card_brand.title()} ••{row.card_last4}" if row.card_last4 else ""
+    return card_label(row.card_brand, row.card_last4)
 
 
 def _explanation(charge: Charge) -> str:

@@ -42,7 +42,7 @@
   ],
   "receipt_for_an_added_charge_paid_by_link": [
     {
-      "body": "Hi Dana, Thank you for your payment for your trip on Tuesday, April 20. Here are the details. AMOUNT CHARGED $80.00 Amex ••1005 · Mar 1, 2027 · Receipt <RECEIPT> FOR Trip #<Q1> · Transfer · Tue Apr 20 1600 Pennsylvania Ave NW → Washington Dulles International Airport (IAD) Cleaning: $100.00 Credit applied: −$20.00 Total: $80.00 This charge was added to your trip after it ended: Cleaning. Questions about this charge? Reply to this email or call (703) 555-0100. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
+      "body": "Hi Dana, Thank you for your payment for your trip on Tuesday, April 20. Here are the details. AMOUNT CHARGED $80.00 American Express ••1005 · Mar 1, 2027 · Receipt <RECEIPT> FOR Trip #<Q1> · Transfer · Tue Apr 20 1600 Pennsylvania Ave NW → Washington Dulles International Airport (IAD) Cleaning: $100.00 Credit applied: −$20.00 Total: $80.00 This charge was added to your trip after it ended: Cleaning. Questions about this charge? Reply to this email or call (703) 555-0100. -- All Pro Charter reservations@allprocharter.com · (703) 555-0100",
       "email_to": [
         "dana.whitfield@example.com"
       ],

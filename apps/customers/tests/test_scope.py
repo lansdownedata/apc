@@ -1,6 +1,6 @@
 """Which trips a customer may see, the label each one wears, and the row a page renders."""
 
-from datetime import date, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -114,6 +114,23 @@ def test_scope_filter_agrees_with_model_properties():
     }
     assert len(expected) == 4  # the mix holds both kinds, not an empty agreement
     assert _visible(account) == expected
+
+
+def test_orders_in_scope_are_the_orders_of_the_trips_in_scope():
+    account = CustomerAccountFactory(contact=ContactFactory(company=CompanyFactory()))
+    me = account.contact
+    affiliate = ContactFactory(company=CompanyFactory(is_affiliate_account=True))
+    ReservationFactory.create_batch(2, lead=LeadFactory(contact=me))
+    ReservationFactory(lead=LeadFactory(contact=ContactFactory(), billing_contact=me))
+    wedding = LeadFactory(contact=me)
+    ReservationFactory(lead=wedding, service_type=ServiceTypeFactory(name=WEDDING_SERVICE_NAME))
+    ReservationFactory(lead=LeadFactory(contact=me), source_leg_id="early-out")
+    ReservationFactory(lead=LeadFactory(contact=affiliate, billing_contact=me))
+    ReservationFactory(lead=LeadFactory(contact=ContactFactory()))
+
+    orders = set(selectors.orders_in_scope(account).values_list("pk", flat=True))
+    assert len(orders) == 2  # the mix holds both kinds, not an empty agreement
+    assert orders == set(selectors.trips_in_scope(account).values_list("lead_id", flat=True))
 
 
 # --- labels --------------------------------------------------------------------------------
@@ -286,6 +303,95 @@ def test_bucket(key, expected):
     assert expected in selectors.BUCKETS
 
 
+def _ids(trips) -> set[int]:
+    return set(trips.values_list("pk", flat=True))
+
+
+def test_label_and_bucket_filters_agree_with_python(account):
+    """`with_labels` is `label_key` and `bucket` for the database. Every lead status, with
+    and without a quote expiry behind it, against every trip status, booked or never
+    booked, dated behind, ahead and not at all."""
+    now = timezone.now()
+    today = timezone.localdate()
+    leads = [
+        LeadFactory(contact=account.contact, status=status, quote_expires_at=expires)
+        for status in Lead.Status.values
+        for expires in (None, now - timedelta(days=1), now + timedelta(days=1))
+    ]
+    Reservation.objects.bulk_create(
+        Reservation(lead=lead, trip_status=status, booked_total=booked, pickup_date=day)
+        for lead in leads
+        for status in ("", *S.values)
+        for booked in (None, Decimal("0.00"), Decimal("185.00"))
+        for day in (None, today - timedelta(days=3), today + timedelta(days=3))
+    )
+    trips = list(selectors.lean_trips(account))
+    assert len(trips) == len(leads) * 12 * 3 * 3
+    labelled = selectors.with_labels(selectors.trips_in_scope(account))
+
+    for key in selectors.LABELS:
+        expected = {t.pk for t in trips if selectors.label_key(t) == key}
+        assert expected, key
+        assert _ids(labelled.filter(label=key)) == expected, key
+    for name in selectors.BUCKETS:
+        expected = {t.pk for t in trips if selectors.bucket(t) == name}
+        assert expected, name
+        assert _ids(labelled.filter(bucket=name)) == expected, name
+
+
+# 10:30 UTC on Nov 21: already Nov 22 on Kiritimati, still Nov 20 in Pago Pago.
+_THREE_DATES = datetime(2026, 11, 21, 10, 30, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "now",
+    [
+        _THREE_DATES,
+        datetime(2026, 11, 22, 3, 0, tzinfo=UTC),
+        datetime(2026, 3, 8, 6, 59, tzinfo=UTC),
+    ],
+    ids=["three-dates", "evening-in-the-business-zone", "before-a-dst-change"],
+)
+def test_a_booked_trip_is_past_once_its_day_is_over_in_its_own_zone(account, now):
+    zones = ["", "America/New_York", "America/Los_Angeles", "Pacific/Honolulu", "Pacific/Pago_Pago"]
+    zones += ["Pacific/Kiritimati", "Asia/Kathmandu", "Europe/London"]
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.BOOKED)
+    Reservation.objects.bulk_create(
+        Reservation(lead=lead, trip_status=status, pickup_timezone=zone, pickup_date=day)
+        for zone in zones
+        for status in (S.UNASSIGNED, S.DISPATCHED, S.ON_THE_WAY)
+        for day in (now.date() + timedelta(days=d) for d in (-2, -1, 0, 1, 2))
+    )
+
+    with patch("django.utils.timezone.now", return_value=now):
+        trips = list(selectors.lean_trips(account))
+        labelled = selectors.with_labels(selectors.trips_in_scope(account))
+        gone = {t.pk for t in trips if selectors.day_gone(t)}
+        past = {t.pk for t in trips if selectors.bucket(t) == "past"}
+        assert _ids(labelled.filter(bucket="past")) == past
+        assert _ids(labelled.filter(bucket="upcoming")) == {t.pk for t in trips} - past
+
+    under_way = {t.pk for t in trips if t.trip_status == S.ON_THE_WAY}
+    assert past == gone - under_way  # a trip under way stays upcoming whatever the date
+    by_zone = {
+        zone: {t.pickup_date for t in trips if t.pk in gone and t.pickup_timezone == zone}
+        for zone in zones
+    }
+    assert len({frozenset(days) for days in by_zone.values()}) > 1  # the zones disagree
+    assert by_zone[""] == by_zone["America/New_York"]  # a blank zone is the business zone
+
+
+def test_a_trip_left_open_after_its_day_keeps_its_label(account, make_trip):
+    stale = make_trip(
+        account,
+        lead__status=Lead.Status.BOOKED,
+        trip_status=S.DISPATCHED,
+        pickup_date=timezone.localdate() - timedelta(days=2),
+    )
+    assert selectors.bucket(stale) == "past"
+    assert selectors.trip_rows([stale])[0]["label"] == "Driver assigned"
+
+
 # --- the row -------------------------------------------------------------------------------
 
 
@@ -294,6 +400,8 @@ ROW_KEYS = {
     "date",
     "time",
     "zone",
+    "clock",
+    "when",
     "route",
     "passenger",
     "confirmation",
@@ -325,7 +433,7 @@ def test_trip_row(account, make_trip):
     PassengerFactory(reservation=trip, name="Mia Chen", sort=0)
     PassengerFactory(reservation=trip, name="Dana Whitfield", is_lead=True, sort=1)
 
-    row = selectors.trip_row(selectors.visible_trips(account).get())
+    row = selectors.trip_rows([selectors.visible_trips(account).get()])[0]
 
     assert set(row) == ROW_KEYS
     assert row == {
@@ -333,6 +441,8 @@ def test_trip_row(account, make_trip):
         "date": "Wed, Nov 18",
         "time": "6:15 AM",
         "zone": "EST",
+        "clock": "6:15 AM EST",
+        "when": "Wed, Nov 18 · 6:15 AM EST",
         "route": "Arlington, VA to Dulles (IAD)",
         "passenger": "Dana Whitfield",
         "confirmation": trip.reference,
@@ -353,7 +463,7 @@ def test_trip_row_shows_the_limoanywhere_confirmation_and_the_trip_zone(account,
         pickup_time=time(15, 5),
         pickup_timezone="America/Los_Angeles",
     )
-    row = selectors.trip_row(trip)
+    row = selectors.trip_rows([trip])[0]
     assert row["confirmation"] == "48213"
     assert row["confirmation_label"] == "Conf. 48213"
     assert (row["date"], row["time"], row["zone"]) == ("Sat, Jul 4", "3:05 PM", "PDT")
@@ -365,25 +475,28 @@ def test_trip_row_shows_the_limoanywhere_confirmation_and_the_trip_zone(account,
 )
 def test_hourly_route_names_the_hours(account, make_trip, hours, min_hours, expected):
     trip = make_trip(account, factory=HourlyReservationFactory, hours=hours, min_hours=min_hours)
-    assert selectors.trip_row(trip)["route"] == expected
+    assert selectors.trip_rows([trip])[0]["route"] == expected
 
 
 def test_thin_trip_row_renders():
     trip = ReservationFactory(
         vehicle=None, rate=0, pickup_date=None, pickup_time=None, pickup_timezone="", stops=[]
     )
-    row = selectors.trip_row(trip)  # not from visible_trips: nothing prefetched
+    row = selectors.trip_rows([trip])[0]  # not from visible_trips: nothing prefetched
     assert row["total"] is None
     assert row["zone"] in ("EST", "EDT")  # the business zone, America/New_York
     assert row["route"] == "Route to be confirmed"
     assert row["date"] == "Date to be confirmed"
     assert row["time"] == "Time to be confirmed"
+    # No zone after a time that is not set, and one phrase when neither is.
+    assert row["clock"] == "Time to be confirmed"
+    assert row["when"] == "Date and time to be confirmed"
     assert row["passenger"] == ""
 
 
 def test_row_never_carries_vendor_or_internal_fields(account, make_trip):
     trip = make_trip(account, affiliate_cost=120, cost_ratio_pct=65)
-    row = selectors.trip_row(trip)
+    row = selectors.trip_rows([trip])[0]
     assert set(row) == ROW_KEYS
     assert Decimal("120") not in row.values()
 
@@ -495,12 +608,14 @@ def test_cancelled_trip_total_is_amount_kept(account):
         lead=lead, rate=185, booked_total=Decimal("185.00"), trip_status=S.CANCELLED
     )
 
-    assert selectors.display_total(late) == money_for(late).allocated == Decimal("100.00")
-    assert selectors.display_total(plain) == money_for(plain).allocated == Decimal("0.00")
-    assert selectors.trip_row(late)["total"] == Decimal("100.00")
+    late_row, plain_row = selectors.trip_rows([late, plain])
+    assert late_row["total"] == money_for(late).allocated == Decimal("100.00")
+    assert plain_row["total"] == money_for(plain).allocated == Decimal("0.00")
+    assert selectors.trip_rows([late])[0]["total"] == Decimal("100.00")
 
 
-def test_display_total_is_the_line_total_or_none_when_unpriced():
+def test_row_total_is_the_line_total_or_none_when_unpriced():
     quoted = LeadFactory(status=Lead.Status.QUOTED)
-    assert selectors.display_total(ReservationFactory(lead=quoted, rate=185)) == Decimal("185.00")
-    assert selectors.display_total(ReservationFactory(rate=0)) is None
+    priced, unpriced = ReservationFactory(lead=quoted, rate=185), ReservationFactory(rate=0)
+    rows = selectors.trip_rows([priced, unpriced])
+    assert [row["total"] for row in rows] == [Decimal("185.00"), None]

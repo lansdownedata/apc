@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_UP, Decimal
 from typing import NamedTuple
@@ -287,15 +288,33 @@ class Reservation(TimeStampedModel):
     class Meta:
         ordering = ["sort_order", "id"]
 
+    # A distinct 600k range so a trip reference never collides with an order's "APC-100xxx"
+    # (leads.QUOTE_NUMBER_BASE). Change it and every reference, and its inverse, moves.
+    REFERENCE_BASE = 600_000
+
     @property
     def reference(self) -> str:
-        """Readable per-trip id, derived from the pk (never stored) — "APC-600142".
-        A distinct 600k range so it never collides with an order's "APC-100xxx"
-        (leads.QUOTE_NUMBER_BASE). Change the base and every reference moves with it."""
+        """Readable per-trip id, derived from the pk (never stored) — "APC-600142"."""
         from apps.leads.models import QUOTE_PREFIX
 
-        base = 600_000
-        return f"{QUOTE_PREFIX}-{base + self.pk}" if self.pk else f"{QUOTE_PREFIX}-—"
+        if not self.pk:
+            return f"{QUOTE_PREFIX}-—"
+        return f"{QUOTE_PREFIX}-{self.REFERENCE_BASE + self.pk}"
+
+    @classmethod
+    def pk_from_reference(cls, text: str) -> int | None:
+        """`reference` read back: "APC-600412", "apc 600412" or a bare "600412" -> 412;
+        anything else -> None. The one inverse every search uses. ASCII digits only, and at
+        most 18 of them, so whatever is typed the pk fits a BIGINT."""
+        from apps.leads.models import QUOTE_PREFIX
+
+        match = re.fullmatch(
+            rf"(?:{QUOTE_PREFIX}\s*-?\s*)?([0-9]{{1,18}})", text.strip(), re.IGNORECASE
+        )
+        if match is None:
+            return None
+        pk = int(match.group(1)) - cls.REFERENCE_BASE
+        return pk if pk > 0 else None
 
     # --- pricing ---
     _CENTS = Decimal("0.01")

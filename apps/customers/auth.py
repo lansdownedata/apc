@@ -17,6 +17,7 @@ from functools import wraps
 from urllib.parse import quote
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.middleware.csrf import rotate_token
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -37,9 +38,12 @@ def _session_hash(account: CustomerAccount) -> str:
 
 
 def sign_in(request: HttpRequest, account: CustomerAccount) -> None:
-    """Start a customer session. The session key is rotated (fixation), but a staff or
-    planner login in the same browser is left alone: none of them share keys."""
+    """Start a customer session. The session key is rotated (fixation), and so is the
+    CSRF token, as Django's own `login()` does: a token seen or planted before sign-in is
+    not good after it. A staff or planner login in the same browser is left alone: none
+    of them share session keys."""
     request.session.cycle_key()
+    rotate_token(request)
     request.session[SESSION_KEY] = account.pk
     request.session[HASH_SESSION_KEY] = _session_hash(account)
     account.last_login = timezone.now()

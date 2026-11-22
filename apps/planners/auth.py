@@ -15,6 +15,7 @@ from functools import wraps
 from urllib.parse import quote
 
 from django.db.models import F
+from django.middleware.csrf import rotate_token
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -48,9 +49,12 @@ def planner_subject(account: PlannerAccount) -> two_factor.Subject:
 
 
 def sign_in(request, account: PlannerAccount) -> None:
-    """Start a planner session. The session key is rotated (fixation), but a staff login
-    in the same browser is left alone — the two never share keys."""
+    """Start a planner session. The session key is rotated (fixation), and so is the CSRF
+    token, as Django's own `login()` does: a token seen or planted before sign-in is not
+    good after it. A staff login in the same browser is left alone — the two never share
+    keys."""
     request.session.cycle_key()
+    rotate_token(request)
     request.session[SESSION_KEY] = account.pk
     request.session[HASH_SESSION_KEY] = _session_hash(account)
     account.last_login = timezone.now()

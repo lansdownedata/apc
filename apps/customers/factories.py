@@ -16,11 +16,13 @@ class CustomerAccountFactory(factory.django.DjangoModelFactory):
     contact = factory.SubFactory(ContactFactory)
     password = factory.LazyFunction(lambda: make_password("correct horse battery"))
     registered_at = factory.LazyFunction(timezone.now)
+    verified_email = factory.LazyAttribute(lambda o: (o.contact.email or "").lower())
 
     class Params:
         invited = factory.Trait(
             invited_at=factory.LazyFunction(timezone.now),
             registered_at=None,
+            verified_email="",
             password=factory.LazyFunction(lambda: make_password(None)),
         )
         revoked = factory.Trait(revoked_at=factory.LazyFunction(timezone.now))

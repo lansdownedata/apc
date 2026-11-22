@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.leads.models import Lead
 
-from . import ledger
+from . import ledger, receipts
 from .models import Charge, PaymentPlan
 
 # Urgency tiers for the hold countdown (APC-26). Display-only for now — step 3 moves them
@@ -274,7 +274,7 @@ def _card_label(hold: Charge) -> str:
     brand, last4 = hold.card_brand, hold.card_last4
     if not last4:
         brand, last4 = hold.plan.card_brand, hold.plan.card_last4
-    return f"{brand.title()} ••{last4}" if last4 else ""
+    return receipts.card_label(brand, last4)
 
 
 def unpaid_deposit_leads(today: date | None = None):

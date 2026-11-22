@@ -530,6 +530,66 @@ def remaining_balance(lead) -> Decimal:
     return leftover if leftover > ZERO else ZERO
 
 
+def open_trip_link(plan: PaymentPlan) -> Charge | None:
+    """The newest open pay-link intent for a trip that still owes exactly its amount."""
+    from . import trip_money
+
+    for link in (
+        plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.PENDING)
+        .exclude(stripe_client_secret="")
+        .exclude(reservation=None)
+        .select_related("reservation")
+        .order_by("-pk")
+    ):
+        if trip_money.money_for(link.reservation).difference == Decimal(link.amount):
+            return link
+    return None
+
+
+def owed(lead) -> tuple[str | None, Decimal]:
+    """(Charge.Kind, amount) for what the customer still owes, or (None, 0).
+
+    Resolved from the ledger, never the plan flags alone — a partial staff charge must be
+    reflected, and `deposit_status` can lag it. The deposit branch is clamped by the total
+    still owed so a deposit percentage larger than the remainder can never over-charge.
+    """
+    plan = getattr(lead, "payment", None)
+    if plan is None:
+        return None, ZERO
+    # A pay link sent for one trip (APC-101) asks for that trip, before anything else: a
+    # card-less booking may have no deposit yet and still owe a processed trip. Only while
+    # the trip still owes exactly that — an edit or a charge since makes the link stale.
+    link = open_trip_link(plan)
+    if link is not None:
+        return Charge.Kind.TRIP, Decimal(link.amount)
+    remaining = remaining_balance(lead)
+    if remaining <= ZERO:
+        return None, ZERO
+    collected = ledger.order_balances(lead)["collected"]
+    if collected < plan.deposit_amount:
+        return Charge.Kind.DEPOSIT, min(plan.deposit_amount - collected, remaining)
+    return Charge.Kind.BALANCE, remaining
+
+
+def pay_state(lead) -> tuple[str | None, Decimal]:
+    """`owed`, but gated on the states a pay form must not appear in. The pay page's answer,
+    and so the answer of every page that links to it (the customer portal's "Pay now")."""
+    from apps.leads.models import Lead
+
+    if lead.status == Lead.Status.LOST:
+        return None, ZERO
+    if lead.status == Lead.Status.QUOTED and lead.quote_expired:
+        return None, ZERO
+    if lead.on_account:  # invoiced to their account; nothing is paid here (APC-105)
+        return None, ZERO
+    if lead.status == Lead.Status.ENGAGED:
+        # Their deposit is authorized and held (APC-26). `owed` reads the ledger, which an
+        # authorization deliberately never touches, so without this the pay page would ask
+        # a customer who has already paid to place a second hold.
+        return None, ZERO
+    return owed(lead)
+
+
 def ensure_plan(lead) -> PaymentPlan:
     """PaymentPlan for this lead, snapshotting quote total if new or still $0."""
     plan, created = PaymentPlan.objects.get_or_create(lead=lead)

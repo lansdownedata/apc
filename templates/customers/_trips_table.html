@@ -1,10 +1,12 @@
 {% load humanize %}
 {% comment %}
-  The Trips table (mockup 2), alone when fetched with `?fragment=1`. Rows are `trip_row`
-  dicts under `groups`; money stays quiet: each trip's own total and one plain total for
-  the whole filtered set at the foot, no headline figure, no group subtotals. A desktop
-  table and, below `md`, stacked rows. Ticking is read by `customerTrips()` from the
-  checkboxes' `data-pick` / `data-amount`.
+  The Trips table (mockup 2), alone when fetched with `?fragment=1`: the first page of
+  rows. Rows are `selectors.trip_rows` dicts under `groups`; money stays quiet: each trip's
+  own total and one plain total for the whole filtered set at the foot, no headline figure,
+  no group subtotals. A desktop table (customers/_trips_rows.html) and, below `md`, stacked
+  rows (customers/_trips_cards.html); "Show more" appends the next page of both
+  (customers/_trips_more.html). Ticking is read by `customerTrips()` from the checkboxes'
+  `data-pick` / `data-amount`.
 {% endcomment %}
 {% url 'customers:request_trip' as request_url %}
 <div data-range-text="{{ range_text }}">
@@ -41,11 +43,12 @@
          class="inline-flex h-[34px] items-center rounded-lg border border-line bg-surface px-3 text-[12.5px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold">Export spreadsheet</a>
     </div>
 
-    <table class="hidden w-full border-collapse text-left md:table">
+    <table data-rows="table" class="hidden w-full border-collapse text-left md:table">
       <thead>
         <tr class="text-[12px] font-semibold text-muted">
           <th scope="col" class="sticky top-14 z-10 w-12 border-b border-line bg-surface py-2.5 pl-6 pr-2">
-            <input type="checkbox" @change="pickAll($event.target.checked)" aria-label="Tick every trip shown"
+            <input type="checkbox" :checked="allPicked" x-effect="$el.indeterminate = count > 0 && !allPicked"
+                   @change="pickAll($event.target.checked)" aria-label="Tick every trip shown"
                    class="h-4 w-4 rounded accent-onyx focus-gold">
           </th>
           <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Date</th>
@@ -56,54 +59,11 @@
           <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface py-2.5 pl-3 pr-6 text-right">Receipt</th>
         </tr>
       </thead>
-      {% for group in groups %}
-      <tbody>
-        <tr><th scope="colgroup" colspan="7" class="bg-surface2 px-6 py-2 text-[12.5px] font-semibold text-ink">{{ group.title }}</th></tr>
-        {% for row in group.rows %}
-        {% url 'customers:trip' row.pk as trip_url %}
-        <tr data-trip="{{ row.pk }}" class="border-b border-line align-top transition-colors" :class="picked['{{ row.pk }}'] !== undefined && 'bg-goldl/40'">
-          <td class="py-3.5 pl-6 pr-2">
-            <input type="checkbox" data-pick="{{ row.pk }}" data-amount="{{ row.total|default_if_none:0|floatformat:2 }}"
-                   :checked="picked['{{ row.pk }}'] !== undefined" @change="pick($event.target)"
-                   aria-label="Tick {{ row.date }}, {{ row.route }}" class="h-4 w-4 rounded accent-onyx focus-gold">
-          </td>
-          <td class="whitespace-nowrap px-3 py-3.5 num">
-            <p class="text-[13.5px] font-semibold text-ink">{{ row.date }}</p>
-            <p class="text-[12.5px] text-muted">{{ row.time }} {{ row.zone }}</p>
-          </td>
-          <td class="px-3 py-3.5">
-            <p class="text-[14px] font-semibold [overflow-wrap:anywhere] {% if row.tone == 'danger' %}text-muted{% else %}text-ink{% endif %}">{% if trip_url %}<a href="{{ trip_url }}" class="rounded focus-gold hover:underline">{{ row.route }}</a>{% else %}{{ row.route }}{% endif %}</p>
-            <p class="text-[12.5px] text-muted">{% if row.passenger %}{{ row.passenger }} · {% endif %}<span class="num">{{ row.confirmation_label }}</span></p>
-          </td>
-          <td class="max-w-[12rem] px-3 py-3.5">{% include "customers/_reference.html" %}</td>
-          <td class="px-3 py-3.5">{% include "customers/_status.html" %}</td>
-          <td class="whitespace-nowrap px-3 py-3.5 text-right text-[13.5px] num">
-            {% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}
-          </td>
-          <td class="whitespace-nowrap py-3.5 pl-3 pr-6 text-right text-[13.5px]">
-            {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="rounded font-semibold text-goldd focus-gold hover:underline">PDF</a>{% else %}<span class="text-muted">—</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-      {% endfor %}
+      {% include "customers/_trips_rows.html" %}
     </table>
 
-    <ul class="border-t border-line md:hidden">
-      {% for group in groups %}
-      <li class="bg-surface2 px-4 py-2.5 text-[12.5px] font-semibold text-ink">{{ group.title }}</li>
-      {% for row in group.rows %}
-      {% url 'customers:trip' row.pk as trip_url %}
-      <li class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-line px-4 py-3.5">
-        <p class="text-[14px] font-semibold [overflow-wrap:anywhere] {% if row.tone == 'danger' %}text-muted{% else %}text-ink{% endif %}">{% if trip_url %}<a href="{{ trip_url }}" class="rounded focus-gold">{{ row.route }}</a>{% else %}{{ row.route }}{% endif %}</p>
-        <p class="text-right text-[14px] num">{% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}</p>
-        <p class="text-[12.5px] text-muted num">{{ row.date }} · {{ row.time }} {{ row.zone }}</p>
-        <span class="justify-self-end">{% include "customers/_status.html" %}</span>
-        <div class="{% if row.has_receipt %}min-w-0{% else %}col-span-2{% endif %} mt-1">{% include "customers/_reference.html" %}</div>
-        {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="mt-1 justify-self-end rounded text-[12.5px] font-semibold text-goldd focus-gold hover:underline">Receipt</a>{% endif %}
-      </li>
-      {% endfor %}
-      {% endfor %}
+    <ul data-rows="cards" class="border-t border-line md:hidden">
+      {% include "customers/_trips_cards.html" %}
     </ul>
 
     {% if counted %}
@@ -114,7 +74,7 @@
     {% endif %}
 
     {% if has_more %}
-    <div class="border-t border-line px-6 py-4 text-center">
+    <div data-more class="border-t border-line px-6 py-4 text-center">
       <button type="button" @click="showMore()" :disabled="loading"
               class="inline-flex h-9 items-center rounded-lg border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold disabled:opacity-60">Show more</button>
     </div>

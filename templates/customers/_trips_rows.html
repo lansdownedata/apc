@@ -1,0 +1,36 @@
+{% load humanize %}
+{% comment %}
+  The desktop rows of the Trips table, a `<tbody>` per group. A group that carries on from
+  the page above (`continued`) has no heading of its own.
+{% endcomment %}
+{% for group in groups %}
+<tbody>
+  {% if not group.continued %}<tr><th scope="colgroup" colspan="7" class="bg-surface2 px-6 py-2 text-[12.5px] font-semibold text-ink">{{ group.title }}</th></tr>{% endif %}
+  {% for row in group.rows %}
+  {% url 'customers:trip' row.pk as trip_url %}
+  <tr data-trip="{{ row.pk }}" class="border-b border-line align-top transition-colors" :class="picked['{{ row.pk }}'] !== undefined && 'bg-goldl/40'">
+    <td class="py-3.5 pl-6 pr-2">
+      <input type="checkbox" data-pick="{{ row.pk }}" data-amount="{{ row.total|default_if_none:0|floatformat:2 }}"
+             :checked="picked['{{ row.pk }}'] !== undefined" @change="pick($event.target)"
+             aria-label="Tick {{ row.date }}, {{ row.route }}" class="h-4 w-4 rounded accent-onyx focus-gold">
+    </td>
+    <td class="whitespace-nowrap px-3 py-3.5 num">
+      <p class="text-[13.5px] font-semibold text-ink">{{ row.date }}</p>
+      <p class="text-[12.5px] text-muted">{{ row.clock }}</p>
+    </td>
+    <td class="px-3 py-3.5">
+      <p class="text-[14px] font-semibold [overflow-wrap:anywhere] {% if row.tone == 'danger' %}text-muted{% else %}text-ink{% endif %}">{% if trip_url %}<a href="{{ trip_url }}" class="rounded focus-gold hover:underline">{{ row.route }}</a>{% else %}{{ row.route }}{% endif %}</p>
+      <p class="text-[12.5px] text-muted">{% if row.passenger %}{{ row.passenger }} · {% endif %}<span class="num">{{ row.confirmation_label }}</span></p>
+    </td>
+    <td class="max-w-[12rem] px-3 py-3.5">{% include "customers/_reference.html" %}</td>
+    <td class="px-3 py-3.5">{% include "customers/_status.html" %}</td>
+    <td class="whitespace-nowrap px-3 py-3.5 text-right text-[13.5px] num">
+      {% if row.total is None %}<span class="text-muted">—</span>{% else %}<span class="{% if row.tone == 'danger' %}text-muted{% else %}font-semibold text-ink{% endif %}">${{ row.total|floatformat:2|intcomma }}</span>{% endif %}
+    </td>
+    <td class="whitespace-nowrap py-3.5 pl-3 pr-6 text-right text-[13.5px]">
+      {% if row.has_receipt %}<a href="{% url 'customers:receipt' row.pk %}" aria-label="Receipt for {{ row.date }}, {{ row.route }} (PDF)" class="rounded font-semibold text-goldd focus-gold hover:underline">PDF</a>{% else %}<span class="text-muted">—</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</tbody>
+{% endfor %}

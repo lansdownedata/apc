@@ -49,6 +49,8 @@ class Notification(TimeStampedModel):
         HOLD_FAILED = "hold_failed", "Cleaning hold not placed"
         # A hold captured at Stripe that no trip has taken up yet: money moved, books not.
         HOLD_UNBOOKED = "hold_unbooked", "Cleaning hold not booked"
+        # A customer asked, from their portal, to change or cancel a booked trip.
+        CUSTOMER_REQUEST = "customer_request", "Customer request"
 
     # Every notification is about an order, except a vendor task's escalation (APC-71).
     lead = models.ForeignKey(

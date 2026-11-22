@@ -309,6 +309,11 @@ TRUSTED_PROXY_COUNT = env.int("TRUSTED_PROXY_COUNT", default=0)
 
 COMPANY_PHONE = env("COMPANY_PHONE", default="")
 COMPANY_EMAIL = env("COMPANY_EMAIL", default="reservations@allprocharter.com")
+# Printed on the customer's trip receipt when set (apps/customers/receipts.py); a blank one
+# is left off. The billing email is where a receipt sends questions, else COMPANY_EMAIL.
+COMPANY_ADDRESS = env("COMPANY_ADDRESS", default="")
+COMPANY_WEBSITE = env("COMPANY_WEBSITE", default="")
+COMPANY_BILLING_EMAIL = env("COMPANY_BILLING_EMAIL", default="")
 # Public https base of the portal, e.g. https://<NGROK_HOST> in dev; required for touch-point
 # quote links (distinct from LA_WEBHOOK_BASE_URL, which is LimoAnywhere-specific).
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")

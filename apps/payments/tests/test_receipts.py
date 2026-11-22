@@ -632,3 +632,18 @@ def test_the_receipt_page_sent_time_carries_the_zone_for_an_eastern_trip(client,
     body = client.get(reverse("order_receipt", args=[charge.pk])).content.decode()
 
     assert re.search(r"Sent .*? (EDT|EST) to ", body)
+
+
+@pytest.mark.parametrize(
+    ("brand", "label"),
+    [
+        ("amex", "American Express ••0005"),
+        ("visa", "Visa ••0005"),
+        ("some_brand", "Some Brand ••0005"),
+        ("unknown", "Card ••0005"),
+        ("", "Card ••0005"),
+    ],
+)
+def test_a_card_is_named_as_its_holder_knows_it(brand, label):
+    assert receipts.card_label(brand, "0005") == label
+    assert receipts.card_label(brand, "") == ""

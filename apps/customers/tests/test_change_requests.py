@@ -7,12 +7,15 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 from django.template.loader import render_to_string
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.factories import UserFactory
+from apps.audit.display import who
+from apps.audit.models import AuditEntry
 from apps.contacts.factories import ContactFactory
 from apps.customers import requests
 from apps.customers.factories import CustomerAccountFactory
@@ -24,6 +27,7 @@ from apps.leads import services as lead_services
 from apps.leads.models import Lead
 from apps.messaging import services as messaging
 from apps.messaging.models import Conversation, Message
+from apps.notifications.models import Notification
 from apps.reservations.models import Reservation
 from apps.reservations.services import set_trip_status
 from apps.tasks import services as task_services
@@ -102,6 +106,30 @@ def test_change_request_records_inbox_message_and_task(account, booked):
     task = req.task
     assert task.lead == trip.lead and task.status == Task.Status.OPEN
     assert task.department == "customer_service"
+
+
+def _bells(trip: Reservation):
+    kind = Notification.Kind.CUSTOMER_REQUEST
+    return Notification.objects.filter(lead=trip.lead, kind=kind).order_by("pk")
+
+
+def test_a_request_rings_the_bell_for_all_staff(account, booked):
+    """A cancellation for tomorrow must not wait for someone to open the Inbox."""
+    trip = booked()
+    _ask(account, trip, kind="cancel", topics=(), reason="Plans changed", body="")
+    _ask(account, trip)
+    cancel, change = _bells(trip)
+    assert cancel.user is None and change.user is None
+    assert cancel.title == f"Cancellation request: {account.contact.name}"
+    assert change.title == f"Change request: {account.contact.name}"
+    assert cancel.detail == f"{trip.reference} · {_when(trip)}"
+
+
+def test_a_double_tap_rings_the_bell_once(account, booked):
+    trip = booked()
+    _ask(account, trip)
+    _ask(account, trip)
+    assert _bells(trip).count() == 1
 
 
 def test_cancel_request_does_not_cancel_the_trip(account, booked):
@@ -307,6 +335,25 @@ def test_posting_a_change_answers_ok_and_the_trip_page_toasts(account, client_as
     assert "Request sent." in client.get(_url("trip", trip)).content.decode()
 
 
+def test_a_request_is_in_the_trips_history_under_the_customers_name(account, client_as, booked):
+    trip = booked()
+    client_as(account).post(
+        _url("ask_change", trip), {"topics": ["Flight"], "body": "UA 88"}, **AJAX
+    )
+    request = CustomerRequest.objects.get()
+    entry = AuditEntry.objects.get(
+        content_type=ContentType.objects.get_for_model(CustomerRequest), object_id=request.pk
+    )
+    assert (entry.trip_id, entry.order_id) == (trip.pk, trip.lead_id)
+    assert (entry.source, entry.actor, entry.actor_email) == (
+        "customer portal",
+        None,
+        account.email,
+    )
+    assert entry.object_repr == "Change request: Flight"
+    assert who(entry) == f"Customer · {account.email}"
+
+
 def test_posting_a_cancel_answers_ok(account, client_as, booked):
     trip = booked()
 
@@ -404,15 +451,47 @@ def test_the_pending_date_is_the_trips_own_day(account, booked):
         assert _detail(account, trip)["pending_request"]["date"] == "Nov 20"
 
 
-def test_another_accounts_request_is_not_shown_as_pending(account, client_as, make_trip):
+def test_the_booker_and_the_billing_contact_see_each_others_pending_request(
+    account, client_as, make_trip
+):
+    """One trip, two people who may ask about it. Once either has asked, both see it as
+    asked, with its day and nothing else, so the same cancellation is not sent twice."""
     booker = CustomerAccountFactory()
     trip = make_trip(booker, lead__status=Lead.Status.QUOTED, pickup_date=_day(20))
     lead_services.book_lead(trip.lead)
     trip.lead.billing_contact = account.contact
     trip.lead.save(update_fields=["billing_contact"])
-    _ask(booker, trip)
+    _ask(booker, trip, kind="cancel", reason="Plans changed", body="Board meeting moved, sorry")
 
-    assert _detail(account, trip)["pending_request"] is None
+    detail = _detail(account, trip)
+    assert detail["pending_request"]["kind"] == "cancel"
+    assert detail["pending_cancel"] and not detail["pending_change"]
+    body = client_as(account).get(_url("trip", trip)).content.decode()
+    assert "Cancellation requested" in body
+    assert "Request to cancel" not in body  # the button gives way to the pending line
+    assert "Request a change" in body  # a pending cancel never hides the other button
+    # Who asked and what they wrote stay with staff.
+    assert "Board meeting moved" not in body
+    assert booker.contact.name not in body and booker.email not in body
+
+
+def test_a_request_about_another_trip_is_not_pending_on_this_one(account, booked):
+    asked, quiet = booked(days=20), booked(days=25)
+    _ask(account, asked)
+    assert _detail(account, quiet)["pending_request"] is None
+
+
+def test_the_hourly_limit_stays_each_accounts_own(account, make_trip):
+    booker = CustomerAccountFactory()
+    trip = make_trip(booker, lead__status=Lead.Status.QUOTED, pickup_date=_day(20))
+    lead_services.book_lead(trip.lead)
+    trip.lead.billing_contact = account.contact
+    trip.lead.save(update_fields=["billing_contact"])
+    for n in range(requests.ASK_LIMIT):
+        _ask(booker, trip, body=f"Change {n}")
+    with pytest.raises(RequestRefused):
+        _ask(booker, trip, body="One too many")
+    assert _ask(account, trip, body="Mine").account == account
 
 
 # --- the trip page and Home -------------------------------------------------------------------
@@ -600,6 +679,24 @@ def test_a_quote_or_confirming_trip_offers_the_dispatch_line_not_the_buttons(
         assert response.status_code == 400 and "call dispatch" in response.json()["error"]
     assert not CustomerRequest.objects.exists() and not Message.objects.exists()
     assert not Task.objects.filter(kind__startswith="customer_").exists()
+
+
+def test_an_expired_quote_still_has_a_way_forward(account, client_as, make_trip):
+    """No pay button and no request buttons: the dispatch number is what is left."""
+    from apps.planners.selectors import dispatch_phone
+
+    trip = make_trip(
+        account,
+        lead__status=Lead.Status.QUOTED,
+        lead__quote_expires_at=timezone.now() - timedelta(days=1),
+        pickup_date=_day(20),
+    )
+    body = client_as(account).get(_url("trip", trip)).content.decode()
+    assert "Quote expired" in body
+    tel = dispatch_phone()["tel"]
+    assert f'This quote has expired. For a new one, call dispatch at <a href="tel:{tel}"' in body
+    assert "Need to change or cancel" not in body
+    assert "Request a change" not in body and "Request to cancel" not in body
 
 
 def test_a_booked_trip_shows_no_dispatch_line(account, client_as, booked):

@@ -120,23 +120,11 @@ def _base(filters: Filters):
         ).distinct()
     if filters.q:
         match = Q(lead__contact__name__icontains=filters.q)
-        pk = _reference_pk(filters.q)
+        pk = Reservation.pk_from_reference(filters.q)
         if pk is not None:
             match |= Q(pk=pk)
         qs = qs.filter(match)
     return qs
-
-
-def _reference_pk(q: str) -> int | None:
-    """ "APC-600142" (any case) → 142, the trip's pk (`Reservation.reference`)."""
-    from apps.leads.models import QUOTE_PREFIX
-
-    text = q.strip().upper()
-    prefix = f"{QUOTE_PREFIX}-"
-    if text.startswith(prefix) and text[len(prefix) :].isdigit():
-        n = int(text[len(prefix) :]) - 600_000
-        return n if n > 0 else None
-    return None
 
 
 def _short(stop) -> str:
@@ -915,7 +903,7 @@ def _bill_queryset(*, vendor=None, q: str = ""):
         match &= Q(assignments__vendor=vendor)
     if q:
         found = Q(lead__contact__name__icontains=q) | Q(assignments__vendor__name__icontains=q)
-        pk = _reference_pk(q)
+        pk = Reservation.pk_from_reference(q)
         if pk is not None:
             found |= Q(pk=pk)
         match &= found

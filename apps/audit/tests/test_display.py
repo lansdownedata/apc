@@ -24,6 +24,7 @@ from apps.audit.factories import AuditEntryFactory
 from apps.audit.models import AuditEntry
 from apps.billing.models import InvoiceLine
 from apps.contacts.models import Company, Contact, ContactPhone
+from apps.customers.models import CustomerAccount
 from apps.dispatch.models import Assignment
 from apps.leads.factories import ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
@@ -345,6 +346,42 @@ def test_affiliate_confirmed_the_trip():
     assert line.sentence == "Confirmed the trip"
 
 
+@pytest.mark.parametrize(
+    ("action", "changes", "sentence"),
+    [
+        (CREATE, {"invited_at": ["None", "2026-01-15 03:30:00"]}, "Invited to the customer portal"),
+        (
+            CREATE,
+            {"registered_at": ["None", "2026-01-15 03:30:00"], "self_registered": ["None", "True"]},
+            "Signed up to the customer portal",
+        ),
+        (
+            UPDATE,
+            {"registered_at": ["None", "2026-01-15 03:30:00"]},
+            "Signed up to the customer portal",
+        ),
+        (
+            UPDATE,
+            {"revoked_at": ["None", "2026-01-15 03:30:00"]},
+            "Revoked customer portal access",
+        ),
+    ],
+)
+def test_customer_portal_access_reads_as_what_happened(action, changes, sentence):
+    line = _one(changes, model=CustomerAccount, action=action, object_repr="dana@example.com")
+    assert line.sentence == sentence
+
+
+def test_a_resent_customer_invite_reads_as_a_dated_change():
+    line = _one(
+        {"invited_at": ["2026-01-15 03:30:00", "2026-01-16 03:30:00"]},
+        model=CustomerAccount,
+        action=UPDATE,
+        object_repr="dana@example.com",
+    )
+    assert line.label == "dana@example.com · Invite sent"
+
+
 def test_planner_request_create_reads_its_question():
     line = _one(
         {"about": ["None", "Can we add a second Sprinter?"], "lead": ["None", "3"]},
@@ -353,6 +390,25 @@ def test_planner_request_create_reads_its_question():
         object_repr="Planner request: Can we add a second Sprinter?",
     )
     assert line.sentence == 'Planner request: "Can we add a second Sprinter?"'
+
+
+@pytest.mark.parametrize(
+    ("kind", "sentence"),
+    [
+        ("change", "Customer asked to change this trip"),
+        ("cancel", "Customer asked to cancel this trip"),
+    ],
+)
+def test_customer_request_create_reads_what_was_asked(kind, sentence):
+    from apps.customers.models import CustomerRequest
+
+    line = _one(
+        {"kind": ["None", kind], "reservation": ["None", "3"], "account": ["None", "1"]},
+        model=CustomerRequest,
+        action=CREATE,
+        object_repr="Change request: Flight",
+    )
+    assert line.sentence == sentence
 
 
 def test_a_stamp_moving_between_two_times_is_an_ordinary_line():
@@ -377,6 +433,9 @@ def test_a_stamp_moving_between_two_times_is_an_ordinary_line():
         ("customer: wedding details", "", "Customer · wedding details"),
         ("affiliate: trip confirmation", "", "Affiliate · trip confirmation"),
         ("planner portal", "ana@example.com", "Planner · ana@example.com"),
+        ("planner portal", "", "Planner"),
+        ("customer portal", "dana@example.com", "Customer · dana@example.com"),
+        ("customer portal", "", "Customer"),
         ("cron: charge-due-balances", "", "Scheduled job · charge-due-balances"),
         ("command: shell", "", "Command · shell"),
         ("public site", "", "Public site"),

@@ -6,8 +6,9 @@ every `@login_required` staff view sees a signed-in customer as an anonymous vis
 
 Unlike `PlannerAccount`, the account keeps no copy of the email. The sign-in email is the
 contact's email, read live: contact emails are unique, so one email never reaches two
-accounts, staff correcting a contact's email changes how the customer signs in, and a
-contact whose email is cleared cannot sign in until it has one again.
+accounts, and a contact whose email is cleared cannot sign in until it has one again.
+When staff change a contact's email, the customer signs in with the new one only after
+setting a password from a link mailed to it (`verified_email`).
 """
 
 from __future__ import annotations
@@ -34,6 +35,10 @@ class CustomerAccount(TimeStampedModel):
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     registered_at = models.DateTimeField(null=True, blank=True)
+    # The sign-in email the customer last proved they receive, by setting a password from a
+    # link mailed to it. Staff can change the contact's email; until a link sent to the new
+    # address is used, the password that went with the old one opens nothing.
+    verified_email = models.CharField(max_length=254, blank=True)
     # True when the customer signed up from the public form rather than through an invite.
     self_registered = models.BooleanField(default=False)
     revoked_at = models.DateTimeField(null=True, blank=True)
@@ -70,8 +75,19 @@ class CustomerAccount(TimeStampedModel):
         return self.Status.INVITED
 
     @property
+    def can_reset(self) -> bool:
+        """Whether a password-reset link may be mailed: a signed-up account with an email."""
+        return self.status == self.Status.ACTIVE and bool(self.email)
+
+    @property
+    def email_unproved(self) -> bool:
+        """The contact's email is not the one this customer proved (staff changed it), so
+        only a reset link sent to the new address lets them back in."""
+        return self.can_reset and self.verified_email != self.email
+
+    @property
     def can_sign_in(self) -> bool:
-        return self.status == self.Status.ACTIVE and self.has_usable_password() and bool(self.email)
+        return self.can_reset and self.has_usable_password() and not self.email_unproved
 
     # --- the bits of the user API Django's password tooling relies on ---------------
 

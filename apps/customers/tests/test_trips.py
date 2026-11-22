@@ -11,14 +11,17 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
+from django.db import connection
 from django.http import QueryDict
+from django.test import Client
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.audit.models import AuditEntry
-from apps.customers import requests, selectors
+from apps.customers import requests, selectors, trip_list
 from apps.customers.factories import CustomerAccountFactory
-from apps.customers.selectors import TripFilter
+from apps.customers.trip_list import TripFilter
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
@@ -67,7 +70,7 @@ def pks(result: dict) -> list[int]:
 
 
 def _trips(account, **kw) -> dict:
-    return selectors.trips(account, TripFilter(**kw))
+    return trip_list.trips(account, TripFilter(**kw))
 
 
 def _get(client, **params) -> str:
@@ -160,9 +163,9 @@ def test_late_evening_trip_is_inside_its_local_day(account, make_trip):
     assert trip.pickup_at.astimezone(ZoneInfo("UTC")).date() == date(2026, 12, 1)
 
     f = TripFilter(tab="past", start=date(2026, 11, 1), end=date(2026, 11, 30))
-    assert trip.pk in pks(selectors.trips(account, f))
+    assert trip.pk in pks(trip_list.trips(account, f))
     f = TripFilter(tab="past", start=date(2026, 12, 1), end=date(2026, 12, 31))
-    assert trip.pk not in pks(selectors.trips(account, f))
+    assert trip.pk not in pks(trip_list.trips(account, f))
 
 
 def test_date_range_is_inclusive_and_labelled(account, make_trip):
@@ -184,7 +187,7 @@ def test_date_range_is_inclusive_and_labelled(account, make_trip):
 def test_quick_ranges_use_the_business_day():
     now = datetime(2026, 11, 20, 15, 0, tzinfo=ZoneInfo("UTC"))
     with patch("django.utils.timezone.now", return_value=now):
-        ranges = selectors.quick_ranges()
+        ranges = trip_list.quick_ranges()
 
     assert [(r["label"], r["start"], r["end"]) for r in ranges] == [
         ("This month", "2026-11-01", "2026-11-30"),
@@ -256,10 +259,27 @@ def test_passenger_filter_and_its_options(account, make_trip):
 
     result = _trips(account, tab="all", passenger="priya raman")
     assert set(pks(result)) == {dana.pk, priya.pk}
-    assert result["passengers"] == [
+    assert trip_list.passenger_options(account) == [
         ("Dana Whitfield", "Dana Whitfield"),
         ("Priya Raman", "Priya Raman"),
     ]
+
+
+def test_the_page_offers_the_passenger_filter_and_a_table_fetch_does_not_ask(
+    account, client_as, make_trip, django_assert_num_queries
+):
+    PassengerFactory(reservation=_done(account, make_trip, _day(-3)), name="Dana Whitfield")
+    client = client_as(account)
+
+    with django_assert_num_queries(BASE_QUERIES) as page:
+        response = client.get(TRIPS, {"tab": "past"})
+    assert response.context["passengers"] == [("Dana Whitfield", "Dana Whitfield")]
+    assert any("SELECT DISTINCT" in q["sql"] for q in page.captured_queries)
+
+    with django_assert_num_queries(BASE_QUERIES - 1) as fragment:
+        response = client.get(TRIPS, {"tab": "past", "fragment": "1"})
+    assert "passengers" not in response.context
+    assert not any("SELECT DISTINCT" in q["sql"] for q in fragment.captured_queries)
 
 
 # --- grouping ----------------------------------------------------------------------------
@@ -310,14 +330,15 @@ def test_total_covers_whole_filter_not_just_first_page(account, make_trip):
         _done(account, make_trip, _day(-1 - i), rate=100)
 
     first = _trips(account, tab="past")
-    assert len(pks(first)) == selectors.PAGE_SIZE == 50
+    assert len(pks(first)) == trip_list.PAGE_SIZE == 50
     assert first["has_more"] is True
     assert first["count"] == 60
     assert first["total"] == Decimal("6000.00")
 
     second = _trips(account, tab="past", page=2)
-    assert len(pks(second)) == 60 and second["has_more"] is False
-    assert second["total"] == Decimal("6000.00")
+    assert len(pks(second)) == 10 and second["has_more"] is False
+    assert set(pks(second)).isdisjoint(pks(first))
+    assert (second["count"], second["total"]) == (60, Decimal("6000.00"))
 
 
 def test_total_ignores_quotes_and_unpriced_requests(account, make_trip):
@@ -446,12 +467,17 @@ def test_trips_query_count_with_50_rows(
     assert response.context["count"] == 53
 
 
-# Session, account, last seen, the trips with their stops and passengers, the cancelled
-# trips' own charges and the passenger options (measured: 8).
-BASE_QUERIES = 8
-# `trip_money.allocations` for every order holding a cancelled trip at once: prepaid sums,
-# frozen shares, the orders' trips. Fixed, however many orders were cancelled.
-KEPT_QUERIES = 3
+# Session, account, last seen; the filtered set's count and its completed and cancelled
+# trips (the foot total); the page of trips with their stops and passengers; the passenger
+# options (measured: 9). Upcoming and Requests have nothing to total: one fewer.
+BASE_QUERIES = 9
+# What the cancelled trips kept: their own charges, and `trip_money.allocations` for every
+# order holding one at once (prepaid sums, frozen shares, the orders' trips). Fixed, however
+# many orders were cancelled.
+KEPT_QUERIES = 4
+# "Show more": session, account, last seen; the next page of trips, their stops and
+# passengers. No count, no total, no options.
+MORE_QUERIES = 6
 
 
 # --- Your reference ----------------------------------------------------------------------
@@ -459,7 +485,7 @@ KEPT_QUERIES = 3
 
 def test_trip_row_carries_the_customer_reference(account, make_trip):
     trip = _done(account, make_trip, _day(-3), customer_reference="Board offsite")
-    assert selectors.trip_row(trip)["reference"] == "Board offsite"
+    assert selectors.trip_rows([trip])[0]["reference"] == "Board offsite"
 
 
 def test_set_reference_trims_caps_and_counts_changes(account, make_trip):
@@ -648,12 +674,12 @@ def _detail_ids(queries, table: str) -> set[int]:
 def test_a_long_history_loads_details_for_the_rows_shown_only(
     account, make_trip, monkeypatch, django_assert_num_queries
 ):
-    monkeypatch.setattr(selectors, "PAGE_SIZE", 5)
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 5)
     for i in range(12):
         _done(account, make_trip, _day(-10 - i))
 
-    # The trips, their stops, their passengers, the passenger options.
-    with django_assert_num_queries(4) as captured:
+    # The count, the completed trips to total, the page, its stops, its passengers.
+    with django_assert_num_queries(5) as captured:
         result = _trips(account, tab="past")
 
     assert result["count"] == 12
@@ -664,7 +690,7 @@ def test_a_long_history_loads_details_for_the_rows_shown_only(
 
 
 def test_grouping_by_passenger_still_orders_the_whole_set(account, make_trip, monkeypatch):
-    monkeypatch.setattr(selectors, "PAGE_SIZE", 2)
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 2)
     for i, name in enumerate(["Zed Young", "Amy Abel", "Mia Moss", "Amy Abel"]):
         trip = _done(account, make_trip, _day(-10 - i))
         PassengerFactory(reservation=trip, name=name, is_lead=True)
@@ -673,3 +699,276 @@ def test_grouping_by_passenger_still_orders_the_whole_set(account, make_trip, mo
 
     assert [g["title"] for g in result["groups"]] == ["Amy Abel"]
     assert [row["passenger"] for row in pks_rows(result)] == ["Amy Abel", "Amy Abel"]
+
+
+# --- "Show more" fetches one page (M-3) -----------------------------------------------------
+
+
+def _rows_in(body: str) -> list[int]:
+    """The trips a response draws, from its desktop rows, in order."""
+    return [int(pk) for pk in re.findall(r'<tr data-trip="(\d+)"', body)]
+
+
+def test_show_more_fetches_the_next_page_only(account, client_as, make_trip, monkeypatch):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 3)
+    trips = [_done(account, make_trip, _day(-1 - i), rate=100) for i in range(8)]
+    client = client_as(account)
+
+    first = _get(client, tab="past", fragment="1")
+    assert _rows_in(first) == [t.pk for t in trips[:3]]
+    assert "8 trips" in first and "$800.00" in first and "Show more" in first
+
+    second = _get(client, tab="past", fragment="1", page="2")
+    assert _rows_in(second) == [t.pk for t in trips[3:6]]
+    assert re.findall(r'<li data-trip="(\d+)"', second) == [str(t.pk) for t in trips[3:6]]
+    assert "data-has-more" in second
+    # Rows and nothing else: no table head, no count, no foot total, no button.
+    for absent in ("<thead", "8 trips", "$800.00", "Show more", "Export spreadsheet"):
+        assert absent not in second
+
+    third = _get(client, tab="past", fragment="1", page="3")
+    assert _rows_in(third) == [t.pk for t in trips[6:]]
+    assert "data-has-more" not in third
+    assert _rows_in(_get(client, tab="past", fragment="1", page="4")) == []
+
+
+def test_a_fetched_page_is_one_page_however_far_down(account, client_as, make_trip, monkeypatch):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 4)
+    for i in range(25):
+        _done(account, make_trip, date(2026, 6, 28) - timedelta(days=i))  # all in June
+    client = client_as(account)
+
+    sizes = [len(_get(client, tab="past", fragment="1", page=str(n))) for n in (2, 4, 6)]
+
+    assert max(sizes) - min(sizes) < 200  # one page each: only the trips' own text differs
+
+
+def test_a_group_carried_onto_the_next_page_does_not_repeat_its_heading(
+    account, client_as, make_trip, monkeypatch
+):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 2)
+    nov = [_done(account, make_trip, date(2026, 11, 20 - i)) for i in range(3)]
+    oct_ = [_done(account, make_trip, date(2026, 10, 20 - i)) for i in range(2)]
+    client = client_as(account)
+
+    first = _get(client, tab="past", fragment="1")
+    assert first.count("November 2026") == 2  # the table and the stacked list
+    second = client.get(TRIPS, {"tab": "past", "fragment": "1", "page": "2"})
+    groups = second.context["groups"]
+    assert [(g["title"], g["continued"], [r["pk"] for r in g["rows"]]) for g in groups] == [
+        ("November 2026", True, [nov[2].pk]),
+        ("October 2026", False, [oct_[0].pk]),
+    ]
+    body = second.content.decode()
+    assert "November 2026" not in body and body.count("October 2026") == 2
+    third = client.get(TRIPS, {"tab": "past", "fragment": "1", "page": "3"})
+    assert [(g["title"], g["continued"]) for g in third.context["groups"]] == [
+        ("October 2026", True)
+    ]
+    assert "October 2026" not in third.content.decode()
+
+
+@pytest.mark.parametrize("group", ["passenger", "reference"])
+def test_named_groups_carry_across_pages_too(account, make_trip, monkeypatch, group):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 2)
+    for i, name in enumerate(["Amy Abel", "amy abel", "Amy Abel", "Zed Young", ""]):
+        trip = _done(account, make_trip, _day(-10 - i), customer_reference=name)
+        if name:
+            PassengerFactory(reservation=trip, name=name, is_lead=True)
+
+    pages = [_trips(account, tab="past", group=group, page=n)["groups"] for n in (1, 2, 3)]
+
+    blank = {"passenger": "No passenger named", "reference": "No reference"}[group]
+    assert [
+        [(g["title"].casefold(), g["continued"], len(g["rows"])) for g in p] for p in pages
+    ] == [
+        [("amy abel", False, 2)],
+        [("amy abel", True, 1), ("zed young", False, 1)],
+        [(blank.casefold(), False, 1)],
+    ]
+
+
+def test_the_page_itself_is_always_the_first_page(account, client_as, make_trip, monkeypatch):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 2)
+    trips = [_done(account, make_trip, _day(-1 - i)) for i in range(5)]
+
+    response = client_as(account).get(TRIPS, {"tab": "past", "page": "3"})
+
+    assert pks(response.context) == [t.pk for t in trips[:2]]
+    assert response.context["filter"]["page"] == 1
+    assert "page=" not in response.context["export_query"]
+
+
+def test_show_more_costs_one_page_whatever_the_history(
+    account, client_as, make_trips, monkeypatch, django_assert_num_queries
+):
+    monkeypatch.setattr(trip_list, "PAGE_SIZE", 5)
+    make_trips(account, 40)
+    client = client_as(account)
+
+    with django_assert_num_queries(MORE_QUERIES + KEPT_QUERIES):
+        response = client.get(TRIPS, {"tab": "past", "fragment": "1", "page": "2"})
+    rows = [row for group in response.context["groups"] for row in group["rows"]]
+    assert len(rows) == 5 and "Cancelled" in {row["label"] for row in rows}
+    with django_assert_num_queries(MORE_QUERIES):
+        client.get(TRIPS, {"tab": "upcoming", "fragment": "1", "page": "2"})
+
+
+@pytest.mark.parametrize("tab,extra", [("upcoming", -1), ("requests", -1), ("past", 0)])
+def test_each_tab_costs_a_fixed_number_of_queries(
+    account, client_as, make_trips, django_assert_num_queries, tab, extra
+):
+    make_trips(account, 30)
+    client = client_as(account)
+    kept = KEPT_QUERIES if tab == "past" else 0
+
+    with django_assert_num_queries(BASE_QUERIES + extra + kept):
+        response = client.get(TRIPS, {"tab": tab})
+    assert response.context["count"] > 3
+
+
+def test_upcoming_and_requests_never_load_a_finished_history(account, client_as, make_trip):
+    ahead = _confirmed(account, make_trip, _day(5))
+    asked = _request(account, make_trip, _day(9))
+    past = [_done(account, make_trip, _day(-1 - i)) for i in range(12)]
+    client = client_as(account)
+
+    for tab, shown in (("upcoming", ahead), ("requests", asked)):
+        with CaptureQueriesContext(connection) as captured:
+            response = client.get(TRIPS, {"tab": tab})
+        assert pks(response.context) == [shown.pk]
+        lists = " ".join(q["sql"] for q in captured.captured_queries)
+        named = {int(n) for ids in re.findall(r"IN \(([\d, ]+)\)", lists) for n in ids.split(",")}
+        assert shown.pk in named and named.isdisjoint(t.pk for t in past)
+        assert not any(
+            "FROM `reservations_reservation`" in q["sql"] and "LIMIT" not in q["sql"]
+            for q in captured.captured_queries
+            if "COUNT(" not in q["sql"]
+        )
+
+
+# --- order and grouping by the trip's own day (deferred 32) --------------------------------
+
+
+def test_month_groups_do_not_split_around_trips_in_two_zones(account, make_trip):
+    """Late on Nov 30 in Los Angeles is after early on Dec 1 in New York: by the instant,
+    December would sit between two Novembers."""
+    la_late = _done(
+        account,
+        make_trip,
+        date(2026, 11, 30),
+        pickup_time=time(23, 30),
+        pickup_timezone="America/Los_Angeles",
+    )
+    ny_early = _done(
+        account,
+        make_trip,
+        date(2026, 12, 1),
+        pickup_time=time(0, 30),
+        pickup_timezone="America/New_York",
+    )
+    ny_nov = _done(
+        account,
+        make_trip,
+        date(2026, 11, 30),
+        pickup_time=time(22, 0),
+        pickup_timezone="America/New_York",
+    )
+    assert ny_early.pickup_at < la_late.pickup_at
+
+    groups = _trips(account, tab="past", start=date(2026, 11, 1))["groups"]
+
+    assert [(g["title"], [r["pk"] for r in g["rows"]]) for g in groups] == [
+        ("December 2026", [ny_early.pk]),
+        ("November 2026", [la_late.pk, ny_nov.pk]),
+    ]
+
+
+def test_undated_trips_come_last_on_every_tab(account, make_trip):
+    undated = _request(account, make_trip, None)
+    dated = _request(account, make_trip, _day(20))
+    soon = _confirmed(account, make_trip, _day(3))
+    someday = make_trip(account, lead__status=Lead.Status.BOOKED, trip_status=S.UNASSIGNED)
+
+    assert pks(_trips(account, tab="requests")) == [dated.pk, undated.pk]
+    assert pks(_trips(account, tab="upcoming")) == [soon.pk, someday.pk]
+    assert pks(_trips(account, tab="all"))[-2:] == [someday.pk, undated.pk]
+
+
+def test_date_range_uses_the_trips_own_day_in_los_angeles(account, make_trip):
+    """11:30 PM on Nov 30 in Los Angeles is Dec 1 in the business zone and in UTC."""
+    trip = _done(
+        account,
+        make_trip,
+        date(2026, 11, 30),
+        pickup_time=time(23, 30),
+        pickup_timezone="America/Los_Angeles",
+    )
+    assert trip.pickup_at.astimezone(NY).date() == date(2026, 12, 1)
+
+    november = TripFilter(tab="past", start=date(2026, 11, 30), end=date(2026, 11, 30))
+    december = TripFilter(tab="past", start=date(2026, 12, 1), end=date(2026, 12, 1))
+    assert pks(trip_list.trips(account, november)) == [trip.pk]
+    assert pks(trip_list.trips(account, december)) == []
+    row = trip_list.trips(account, november)["groups"][0]["rows"][0]
+    assert (row["date"], row["time"], row["zone"]) == ("Mon, Nov 30", "11:30 PM", "PST")
+
+
+# --- ticked rows (deferred 34, 36, 39) -----------------------------------------------------
+
+
+def test_set_reference_needs_csrf(account, client_as, make_trip):
+    trip = _done(account, make_trip, _day(-3))
+    client = Client(enforce_csrf_checks=True)
+    client.cookies = client_as(account).cookies
+
+    response = client.post(
+        reverse("customers:set_reference"), {"ids": str(trip.pk), "value": "Board offsite"}
+    )
+
+    assert response.status_code == 403
+    trip.refresh_from_db()
+    assert trip.customer_reference == ""
+
+
+def test_set_reference_caps_the_ids_it_takes(account, client_as, make_trip, monkeypatch):
+    from apps.customers import views
+
+    monkeypatch.setattr(views, "MAX_TICKED_IDS", 2)
+    trips = [_done(account, make_trip, _day(-3 - i)) for i in range(4)]
+
+    response = client_as(account).post(
+        reverse("customers:set_reference"),
+        {"ids": ",".join(str(t.pk) for t in trips), "value": "Offsite"},
+    )
+
+    assert json.loads(response.content) == {"ok": True, "changed": 2}
+    assert Reservation.objects.filter(customer_reference="Offsite").count() == 2
+
+
+def test_set_reference_can_answer_with_the_rows_redrawn(account, client_as, make_trip):
+    mine = _done(account, make_trip, _day(-3))
+    theirs = _done(CustomerAccountFactory(), make_trip, _day(-3))
+
+    response = client_as(account).post(
+        reverse("customers:set_reference"),
+        {"ids": f"{mine.pk},{theirs.pk}", "value": "Board <offsite>", "rows": "1"},
+    )
+
+    answer = json.loads(response.content)
+    assert (answer["ok"], answer["changed"]) == (True, 1)
+    assert f'<tr data-trip="{mine.pk}"' in answer["rows"]
+    assert f'<li data-trip="{mine.pk}"' in answer["rows"]
+    assert "Board &lt;offsite&gt;" in answer["rows"] and "<offsite>" not in answer["rows"]
+    assert str(theirs.pk) not in answer["rows"]
+    assert "<th" not in answer["rows"]  # rows only: no group heading
+
+
+def test_the_tick_all_box_follows_the_rows_ticked(account, client_as, make_trip):
+    _done(account, make_trip, _day(-3))
+
+    body = _get(client_as(account), tab="past")
+    head = body[body.index("<thead") : body.index("</thead>")]
+    assert ':checked="allPicked"' in head
+    assert 'x-effect="$el.indeterminate = count > 0 && !allPicked"' in head
+    assert '@change="pickAll($event.target.checked)"' in head

@@ -2,8 +2,8 @@
 {% comment %}
   Customer portal access on the contact profile (spec 2026-11-20 §12), beside the planner
   access card and built like it: the state, one line of who did what when, then the actions
-  that apply. A blocked send (affiliate company, no email, go-live switch off) shows its
-  reason with the button disabled. Revoke is never blocked.
+  that apply. A blocked send (affiliate company, no email, go-live switch off, no public
+  address) shows its reason with the button disabled. Revoke is never blocked.
 {% endcomment %}
 {% with ca=customer_access %}
 <section class="card flex flex-wrap items-center gap-x-4 gap-y-3 p-5" aria-label="Customer portal">
@@ -13,6 +13,7 @@
       <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset {% if ca.status == 'active' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% elif ca.status == 'invited' %}bg-goldl text-goldd ring-gold/25{% elif ca.status == 'revoked' %}bg-rose-50 text-rose-700 ring-rose-600/20{% else %}bg-slate-100 text-slate-500 ring-slate-500/20{% endif %}">{{ ca.label }}</span>
     </div>
     <p class="mt-0.5 text-[12.5px] text-muted">{{ ca.line }}</p>
+    {% if ca.note %}<p class="mt-1 text-[12px] text-amber-700">{{ ca.note }}</p>{% endif %}
     {% if ca.blocked_reason %}<p class="mt-1 text-[12px] text-amber-700">{{ ca.blocked_reason }}</p>{% endif %}
   </div>
   <div class="flex flex-wrap items-center gap-2">
@@ -47,7 +48,7 @@
               class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-rose-700 ring-1 ring-line transition-colors hover:bg-rose-50 focus-gold disabled:cursor-not-allowed disabled:opacity-50"
               @click="$store.modal.confirm({
                 title: 'Revoke portal access',
-                message: {{ contact.name|json_string }} + ' is signed out and can no longer sign in to the customer portal. Their invite link stops working too. You can invite them again any time.',
+                message: {{ contact.name|json_string }} + {% if ca.never_signed_in %}' has not signed up yet. Their invite link stops working. You can invite them again any time.'{% else %}' is signed out and can no longer sign in to the customer portal. Their invite link stops working too. You can invite them again any time.'{% endif %},
                 variant: 'danger',
                 confirmText: 'Revoke access',
                 onConfirm: () => $refs.customerRevokeForm.submit(),

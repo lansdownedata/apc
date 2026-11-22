@@ -84,9 +84,5 @@ def reset(request: HttpRequest, pk: int) -> HttpResponseRedirect:
     if sent:
         messages.success(request, f"Password reset sent to {account.email}.")
     else:
-        messages.warning(
-            request,
-            "The reset email was not sent. One address gets at most "
-            f"{services.MAILS_PER_EMAIL} an hour; try again later.",
-        )
+        messages.warning(request, "The reset email could not be sent. Try again in a minute.")
     return _back(pk)

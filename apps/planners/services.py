@@ -9,14 +9,12 @@ uses — rather than creating an account nobody was told about.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import time, timedelta
 from urllib.parse import urljoin
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
-from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.urls import reverse
@@ -26,7 +24,7 @@ from django.utils.http import urlsafe_base64_encode
 
 from apps.audit.context import audit_context
 from apps.contacts.models import Contact
-from apps.core import outbound
+from apps.core import outbound, throttle
 from apps.core.phone import to_e164
 from apps.leads.models import Lead
 
@@ -204,13 +202,16 @@ def register(account: PlannerAccount, password: str) -> PlannerAccount:
 
 
 def _record_failure(account: PlannerAccount, now) -> None:
-    failures = account.failed_logins + 1
-    if failures >= LOCKOUT_FAILURES:
-        PlannerAccount.objects.filter(pk=account.pk).update(
-            failed_logins=0, locked_until=now + LOCKOUT_FOR
-        )
-    else:
-        PlannerAccount.objects.filter(pk=account.pk).update(failed_logins=failures)
+    """Count one wrong password, and lock the account at the tenth. The count is read
+    under a row lock, not off `account`: wrong guesses sent side by side each hold a copy
+    read before the others were counted, and would otherwise all write the same number."""
+    with transaction.atomic():
+        row = PlannerAccount.objects.select_for_update().get(pk=account.pk)
+        row.failed_logins += 1
+        if row.failed_logins >= LOCKOUT_FAILURES:
+            row.failed_logins, row.locked_until = 0, now + LOCKOUT_FOR
+        row.save(update_fields=["failed_logins", "locked_until"])
+    account.failed_logins, account.locked_until = row.failed_logins, row.locked_until
 
 
 def authenticate(email: str, password: str) -> PlannerAccount | None:
@@ -237,14 +238,13 @@ def authenticate(email: str, password: str) -> PlannerAccount | None:
 
 
 RESET_PER_EMAIL = 3  # reset mails per address per hour, refused silently past it
-RESET_EMAIL_WINDOW = 60 * 60
+RESET_EMAIL_WINDOW = timedelta(hours=1)
 
 
 def _reset_allowed(email: str) -> bool:
-    key = "planner-reset-email:" + hashlib.sha256(email.encode()).hexdigest()
-    count = cache.get(key, 0)
-    cache.set(key, count + 1, RESET_EMAIL_WINDOW)
-    return count < RESET_PER_EMAIL
+    """Count one more reset mail to `email`; False past `RESET_PER_EMAIL` in the hour.
+    Counted in the database (`core.throttle`), so the cap is the same on every worker."""
+    return throttle.hit("planner-reset-email", email, RESET_EMAIL_WINDOW) <= RESET_PER_EMAIL
 
 
 def send_password_reset(email: str) -> bool:

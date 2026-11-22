@@ -5,7 +5,8 @@ an id from another account is skipped, never written. `Reservation` is audited: 
 changed trip is saved on its own with `update_fields`, so the trail records it under the
 request's source (`customer portal`, `apps.audit.middleware`). A requested trip is a new
 lead on the account's own contact (`request_trip`). A change or cancellation is only asked
-for (`ask`): a message in the Inbox and a task for staff, and the trip stays as it is.
+for (`ask`): a message in the Inbox, a task and a notification for staff, and the trip
+stays as it is.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from apps.audit.children import track_children
+from apps.contacts import services as contacts
 from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead
@@ -30,7 +32,7 @@ from apps.reservations.passengers import NAME_MAX
 from apps.tasks.models import Task
 
 from .models import CustomerAccount, CustomerRequest
-from .selectors import _short_day, label_key, visible_trips
+from .selectors import label_key, short_day, visible_trips
 from .services import CustomerError
 
 REFERENCE_MAX = Reservation._meta.get_field("customer_reference").max_length
@@ -95,6 +97,13 @@ def _notes(data: dict) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+def needs_mobile(account: CustomerAccount) -> bool:
+    """Whether the request form must ask the customer for their own mobile when they are
+    the one riding: there is none on file, or the one on file can't be dialled. A lead
+    passenger needs a number (`reservations.Passenger`)."""
+    return to_e164(account.contact.phone) is None
+
+
 def _rider(account: CustomerAccount, data: dict) -> tuple[str, str]:
     """(name, mobile) of the trip's lead passenger: who trip-day texts go to. A contact's
     name can be longer than a passenger's, so it is cut as `reservations.passengers` cuts
@@ -103,6 +112,16 @@ def _rider(account: CustomerAccount, data: dict) -> tuple[str, str]:
         return data["rider_name"], data["rider_mobile"]
     contact = account.contact
     return contact.name.strip()[:NAME_MAX], to_e164(contact.phone) or ""
+
+
+def _keep_my_mobile(account: CustomerAccount, data: dict) -> None:
+    """The mobile a customer with none on file typed for themselves (`my_mobile`, asked
+    for only then: `needs_mobile`) goes on their contact as the number we text, the way the
+    Account page saves one, so this trip and the next have it. Never replaces a number that
+    can be dialled."""
+    number = data.get("my_mobile") or ""
+    if number and needs_mobile(account):
+        contacts.add_phone(account.contact, number, texting=True)
 
 
 def can_request(account: CustomerAccount) -> bool:
@@ -133,7 +152,9 @@ def _with_directions(stops: list[dict]) -> list[dict]:
 def request_trip(account: CustomerAccount, data: dict) -> Lead:
     """Turn a valid `TripRequestForm` into a New lead on the account's own contact, with
     one unpriced trip shaped as a website booking's (`create_lead_from_booking`). The
-    contact is never matched, renamed or given a new number.
+    contact is never matched or renamed, and its number is never replaced: it gains one
+    only when it had none that could be dialled and the customer, riding themselves, typed
+    theirs (`_keep_my_mobile`), which also makes them the trip's lead passenger.
 
     The same request again inside `DUPLICATE_WINDOW` returns the first lead. Past
     `REQUEST_LIMIT` requests in the rolling hour, raises `CustomerError("limited")`. Both
@@ -168,6 +189,7 @@ def request_trip(account: CustomerAccount, data: dict) -> Lead:
         )
         stops = _with_directions(data.get("stops") or [])
         link_flights(stops, reservation.pickup_date)
+        _keep_my_mobile(account, data)
         name, mobile = _rider(account, data)
         with track_children(reservation, route=True, passengers=True):
             Stop.objects.bulk_create(
@@ -203,11 +225,15 @@ def request_trip(account: CustomerAccount, data: dict) -> Lead:
 
 def recent_addresses(account: CustomerAccount, limit: int = 5) -> list[dict]:
     """Up to `limit` distinct addresses (compared trimmed and case-folded) from the stops
-    of the account's own trips, latest trip first: what the "Recent" chips fill in."""
+    of the account's own trips, most recently used first: what the "Recent" chips fill in.
+    "Used" is when the trip was requested or booked, not when it runs, so next month's
+    trip does not push last week's address off the list; trips made together (an import)
+    fall back to the latest pickup first."""
     stops = (
         Stop.objects.filter(reservation__in=visible_trips(account).values("pk"))
         .exclude(address="")
         .order_by(
+            "-reservation__created_at",
             F("reservation__pickup_date").desc(nulls_last=True),
             F("reservation__pickup_time").desc(nulls_last=True),
             "-reservation_id",
@@ -259,7 +285,9 @@ ASK_DUPLICATE_WINDOW = timedelta(seconds=30)
 # on an order that is not booked (`tasks.jobs._sweep`), so it would be lost.
 ASKABLE = frozenset({"confirmed", "driver_assigned"})
 # Before booking these call dispatch instead (`trip_detail`, "Need to change or cancel this?").
-CALL_TO_ASK = frozenset({"quote_ready", "confirming"})
+# An expired quote is one of them: it has no pay button either, so the dispatch number is
+# its only way forward.
+CALL_TO_ASK = frozenset({"quote_ready", "quote_expired", "confirming"})
 _TASK_KIND = {
     CustomerRequest.Kind.CHANGE: "customer_change_request",
     CustomerRequest.Kind.CANCEL: "customer_cancel_request",
@@ -309,9 +337,10 @@ def ask(
     body: str,
 ) -> CustomerRequest:
     """Record a customer's change (`kind="change"`) or cancellation (`"cancel"`) request
-    about `trip` as an inbound message on the account's own conversation, and open a
-    Customer Service task on the trip's order. The caller resolved `trip` through
-    `selectors.visible_trips(account)`. Nothing on the trip or its order is changed.
+    about `trip` as an inbound message on the account's own conversation, open a
+    Customer Service task on the trip's order, and ring the bell for all staff. The caller
+    resolved `trip` through `selectors.visible_trips(account)`. Nothing on the trip or its
+    order is changed.
 
     `topics` keeps only `CHANGE_TOPICS` (in their order); a reason outside
     `CANCEL_REASONS` is "Other". The body is required for a change and optional for a
@@ -366,6 +395,13 @@ def ask(
             sender_name=account.contact.name,
         )
         task = tasks.open_request_task(trip.lead, _TASK_KIND[kind])
+        asked = "Change" if kind == CustomerRequest.Kind.CHANGE else "Cancellation"
+        Notification.notify(
+            trip.lead,
+            Notification.Kind.CUSTOMER_REQUEST,
+            title=f"{asked} request: {account.contact.name}"[:NOTIFICATION_TITLE_MAX],
+            detail=f"{trip.reference} · {when(trip)}",
+        )
         return CustomerRequest.objects.create(
             account=account,
             reservation=trip,
@@ -378,11 +414,18 @@ def ask(
 
 
 def pending(account: CustomerAccount, trip: Reservation) -> list[dict]:
-    """The account's requests about `trip` whose task is still open, newest first, as
-    `{"kind", "date"}` (the day it was sent in the trip's zone, "Nov 20"). One query."""
+    """The requests about `trip` whose task is still open, newest first, as
+    `{"kind", "date"}` (the day it was sent in the trip's zone, "Nov 20"). One query.
+
+    Every request about the trip, whoever sent it: the caller resolved `trip` through
+    `selectors.visible_trips(account)`, so `account` may see the trip, and the person who
+    booked it and the person billed for it must each see "Cancellation requested" once
+    either has asked, or both ask. Only the kind and the day are returned. Who asked and
+    what they wrote stay with staff: the words were written to the office, not to the
+    other customer."""
     rows = (
-        account.requests.filter(reservation=trip, task__status__in=Task.UNRESOLVED)
+        CustomerRequest.objects.filter(reservation=trip, task__status__in=Task.UNRESOLVED)
         .order_by("-created_at", "-pk")
         .values_list("kind", "created_at")
     )
-    return [{"kind": kind, "date": _short_day(at, trip)} for kind, at in rows]
+    return [{"kind": kind, "date": short_day(at, trip)} for kind, at in rows]

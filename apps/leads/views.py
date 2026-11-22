@@ -33,7 +33,6 @@ from apps.dispatch.models import FarmInRequest
 from apps.messaging import events
 from apps.messaging import history as message_history
 from apps.notifications.models import Notification
-from apps.payments import ledger
 from apps.payments import reports as payment_reports
 from apps.payments import services as payment_services
 from apps.public import services as public_services
@@ -607,50 +606,6 @@ def _lead_from_token(token: str) -> Lead:
         raise Http404 from None
 
 
-def _owed(lead: Lead) -> tuple[str | None, Decimal]:
-    """(Charge.Kind, amount) for what the customer still owes, or (None, 0).
-
-    Resolved from the ledger, never the plan flags alone — a partial staff charge must be
-    reflected, and `deposit_status` can lag it. The deposit branch is clamped by the total
-    still owed so a deposit percentage larger than the remainder can never over-charge.
-    """
-    from apps.payments.models import Charge
-
-    plan = getattr(lead, "payment", None)
-    if plan is None:
-        return None, ZERO
-    # A pay link sent for one trip (APC-101) asks for that trip, before anything else: a
-    # card-less booking may have no deposit yet and still owe a processed trip. Only while
-    # the trip still owes exactly that — an edit or a charge since makes the link stale.
-    link = _open_trip_link(plan)
-    if link is not None:
-        return Charge.Kind.TRIP, Decimal(link.amount)
-    owed = payment_services.remaining_balance(lead)
-    if owed <= ZERO:
-        return None, ZERO
-    collected = ledger.order_balances(lead)["collected"]
-    if collected < plan.deposit_amount:
-        return Charge.Kind.DEPOSIT, min(plan.deposit_amount - collected, owed)
-    return Charge.Kind.BALANCE, owed
-
-
-def _open_trip_link(plan):
-    """The newest open pay-link intent for a trip that still owes exactly its amount."""
-    from apps.payments import trip_money
-    from apps.payments.models import Charge
-
-    for link in (
-        plan.charges.filter(kind=Charge.Kind.TRIP, status=Charge.Status.PENDING)
-        .exclude(stripe_client_secret="")
-        .exclude(reservation=None)
-        .select_related("reservation")
-        .order_by("-pk")
-    ):
-        if trip_money.money_for(link.reservation).difference == Decimal(link.amount):
-            return link
-    return None
-
-
 def _hold_was_released(lead: Lead) -> bool:
     """True once an authorization on this quote lapsed without ever being captured."""
     from apps.payments.models import Charge
@@ -659,22 +614,6 @@ def _hold_was_released(lead: Lead) -> bool:
     if plan is None:
         return False
     return plan.charges.filter(kind=Charge.Kind.DEPOSIT, status=Charge.Status.EXPIRED).exists()
-
-
-def _pay_state(lead: Lead) -> tuple[str | None, Decimal]:
-    """`_owed`, but gated on the states a pay form must not appear in."""
-    if lead.status == Lead.Status.LOST:
-        return None, ZERO
-    if lead.status == Lead.Status.QUOTED and lead.quote_expired:
-        return None, ZERO
-    if lead.on_account:  # invoiced to their account; nothing is paid here (APC-105)
-        return None, ZERO
-    if lead.status == Lead.Status.ENGAGED:
-        # Their deposit is authorized and held (APC-26). `_owed` reads the ledger, which an
-        # authorization deliberately never touches, so without this the pay page would ask
-        # a customer who has already paid to place a second hold.
-        return None, ZERO
-    return _owed(lead)
 
 
 @require_http_methods(["GET", "POST"])
@@ -751,7 +690,7 @@ def quote_book_on_account(request, token: str) -> HttpResponse:
 def quote_pay(request, token: str) -> HttpResponse:
     """The customer pay page — deposit or balance, whichever is owed."""
     lead = _lead_from_token(token)
-    kind, amount = _pay_state(lead)
+    kind, amount = payment_services.pay_state(lead)
     hold = payment_reports.authorized_hold(lead)
     return render(
         request,
@@ -766,7 +705,7 @@ def quote_pay(request, token: str) -> HttpResponse:
             "is_expired": lead.status == Lead.Status.QUOTED and lead.quote_expired,
             "is_lost": lead.status == Lead.Status.LOST,
             "on_account": lead.on_account,
-            # ENGAGED has nothing to pay (`_pay_state`) but is emphatically NOT paid —
+            # ENGAGED has nothing to pay (`pay_state`) but is emphatically NOT paid —
             # the money is only held (APC-26). Without this the page falls through to
             # "paid in full", which is false and invites a chargeback.
             "is_engaged": lead.status == Lead.Status.ENGAGED,
@@ -777,7 +716,9 @@ def quote_pay(request, token: str) -> HttpResponse:
             "needs_terms": kind == "deposit" and lead.accepted_terms_at is None,
             # A booked order's deposit is captured as it lands: no hold to promise (PAY-11).
             "charged_now": kind == "deposit" and lead.status == Lead.Status.BOOKED,
-            "trip_charge": _open_trip_link(lead.payment) if kind == "trip" else None,
+            "trip_charge": payment_services.open_trip_link(lead.payment)
+            if kind == "trip"
+            else None,
             "stripe_pk": settings.STRIPE_PUBLISHABLE_KEY,
             "success_url": request.build_absolute_uri(
                 reverse("quote_deposit_success", args=[token])
@@ -790,7 +731,7 @@ def quote_pay(request, token: str) -> HttpResponse:
 def quote_pay_intent(request, token: str) -> JsonResponse:
     """Mint (or reuse) the PaymentIntent for whatever is owed. Token-keyed; CSRF still on."""
     lead = _lead_from_token(token)
-    kind, amount = _pay_state(lead)
+    kind, amount = payment_services.pay_state(lead)
     if kind is None:
         return JsonResponse(
             {"ok": False, "error": "There is nothing to pay on this quote."}, status=400
@@ -807,7 +748,7 @@ def quote_pay_intent(request, token: str) -> JsonResponse:
     plan = payment_services.ensure_plan(lead)
     try:
         if kind == "trip":
-            link = _open_trip_link(plan)
+            link = payment_services.open_trip_link(plan)
             if link is None:  # charged from the office between the page load and this click
                 return JsonResponse(
                     {"ok": False, "error": "There is nothing to pay on this quote."}, status=400

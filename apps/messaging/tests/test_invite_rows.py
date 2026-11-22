@@ -26,7 +26,7 @@ from apps.customers import services as customer_services
 from apps.customers.factories import CustomerAccountFactory
 from apps.leads.factories import LeadFactory
 from apps.leads.models import Lead
-from apps.messaging import defaults, editor, fields, listing, sender, triggers
+from apps.messaging import defaults, editor, fields, listing, rules, sender, triggers
 from apps.messaging.models import Delivery, MessageTemplate, NotificationConfig, TouchPoint
 from apps.planners import services as planner_services
 from apps.planners.models import PlannerAccount
@@ -249,6 +249,23 @@ def test_the_editor_cannot_switch_an_invite_off(client, key):
     resp = _edit(client, key, enabled=None)
     assert resp.status_code == 302
     assert _row(key).enabled is True
+
+
+@pytest.mark.parametrize("key", INVITE_KEYS)
+def test_an_account_email_goes_even_if_its_stored_switch_is_somehow_off(key):
+    """The page offers no switch for these, so a flag turned off in the database (the
+    Django admin, a script) could never be turned back on from Settings, and nobody would
+    learn that invites or password resets had stopped. The sender does not read it."""
+    MessageTemplate.objects.filter(key=key).update(enabled=False)
+    row = _row(key)
+    assert rules.check(TouchPoint(message=row, kind=key), row, master=True) == rules.SEND
+
+
+def test_a_customer_password_reset_still_arrives_with_its_stored_switch_off():
+    account = CustomerAccountFactory()
+    MessageTemplate.objects.filter(key="customer_password_reset").update(enabled=False)
+    assert customer_services.send_password_reset(account.email) is True
+    assert [m.to for m in mail.outbox] == [[account.email]]
 
 
 def test_the_wedding_email_can_be_switched_off_and_then_sends_nothing(client):
