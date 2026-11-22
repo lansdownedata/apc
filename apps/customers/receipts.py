@@ -53,11 +53,29 @@ _REFUND_BY = {
 }
 
 
+# The order's stages in which the customer has been sent its price, or has accepted it.
+_QUOTED_STAGES = frozenset({Lead.Status.QUOTED, Lead.Status.ENGAGED, Lead.Status.BOOKED})
+
+
 def priced(trip: Reservation) -> bool:
-    """The trip has a price the customer may see. A request nobody has quoted yet does not,
-    and nor does one staff are still pricing: while the order is New, a rate typed in is a
-    draft nobody has sent, so no figure, line, paid amount or receipt shows for it."""
-    return trip.lead.status != Lead.Status.NEW and Decimal(trip.rate or 0) > 0
+    """The trip has a price the customer may see: it has a rate, and somebody committed to
+    it. A quote sent or accepted is one (Quoted, Engaged, Booked, or Lost after the quote
+    went out); so is a booking, which freezes `booked_total` on the trip.
+
+    A draft never shows. While the order is New a rate typed in is a figure nobody has
+    sent, and a request closed before its quote went out never had one. An order reopened
+    to New after it booked is priced afresh too, except for its trips that already ended
+    (completed, cancelled, no-show): their money was real, so their figures and receipts
+    stay."""
+    if Decimal(trip.rate or 0) <= 0:
+        return False
+    lead = trip.lead
+    if lead.status in _QUOTED_STAGES:
+        return True
+    booked = trip.booked_total is not None
+    if lead.status == Lead.Status.NEW:
+        return booked and trip.trip_status in processing.TERMINAL
+    return booked or lead.quote_sent_at is not None
 
 
 def _processed(trip: Reservation) -> bool:
@@ -80,14 +98,18 @@ def shows_kept(trip: Reservation) -> bool:
 
 def customer_total(trip: Reservation, kept: Decimal | None = None) -> Decimal | None:
     """The customer's figure for this trip, wherever it shows (Trips row and foot total,
-    trip page, spreadsheet, receipt): None while unpriced (`priced`: no rate yet, or the
-    order still New and the quote unsent); the money kept on a cancelled
-    trip not settled by processing (`kept`, its `money_for(trip).allocated`, when the
-    caller has it: lists batch it); otherwise the trip's price, `line_total`."""
+    trip page, spreadsheet, receipt): None while unpriced (`priced`: no rate, or a figure
+    nobody committed to); the money kept on a cancelled trip not settled by processing
+    (`kept`, its `money_for(trip).allocated`, when the caller has it: lists batch it), or
+    None when it was cancelled before the order booked; otherwise the trip's price,
+    `line_total`."""
     if not priced(trip):
         return None
     if shows_kept(trip):
-        return trip_money.money_for(trip).allocated if kept is None else kept
+        amount = trip_money.money_for(trip).allocated if kept is None else kept
+        # Cancelled before the order ever booked: nothing was charged, so no figure at all
+        # (a booked trip refunded in full reads $0.00).
+        return None if trip.booked_total is None and not amount else amount
     return trip.line_total
 
 

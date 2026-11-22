@@ -13,7 +13,7 @@ from apps.billing.factories import AccountGroupFactory
 from apps.customers import exports, trip_list
 from apps.customers.factories import CustomerAccountFactory
 from apps.customers.trip_list import TripFilter
-from apps.leads.factories import LeadFactory
+from apps.leads.factories import LeadFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
 from apps.payments.models import Charge
@@ -144,6 +144,54 @@ def test_an_order_billed_to_an_account_says_account(account, make_trip):
     assert cells["Payment method"] == "Account"
 
 
+def test_paid_on_account_is_what_was_charged_which_is_nothing(account, make_trip):
+    """Invoiced to the account: no card money, so Paid is 0.00 beside the trip's price."""
+    trip = _booked(
+        account,
+        make_trip,
+        lead__billing_group=AccountGroupFactory(),
+        rate=Decimal("200.00"),
+        hours=1,
+        booked_total=Decimal("200.00"),
+    )
+    cells = _cells(account)
+    assert (cells["Total"], cells["Paid"]) == (f"{trip.line_total:.2f}", "0.00")
+    assert cells["Payment method"] == "Account"
+
+
+def test_paid_is_net_of_a_refund_on_the_trip(account, make_trip):
+    trip = _booked(
+        account, make_trip, rate=Decimal("200.00"), hours=1, booked_total=Decimal("200.00")
+    )
+    plan = PaymentPlanFactory(lead=trip.lead, quote_total=trip.line_total)
+    for kind, amount, on in (
+        (Charge.Kind.DEPOSIT, "100.00", None),
+        (Charge.Kind.BALANCE, "100.00", None),
+        (Charge.Kind.REFUND, "50.00", trip),
+    ):
+        ChargeFactory(
+            plan=plan,
+            kind=kind,
+            status=Charge.Status.SUCCEEDED,
+            amount=Decimal(amount),
+            reservation=on,
+        )
+
+    assert _cells(account)["Paid"] == "150.00"
+
+
+def test_paid_is_net_of_a_refund_on_the_whole_order(account, make_trip):
+    """An order-level refund comes off the prepaid pool before it is shared out."""
+    trip = _booked(
+        account, make_trip, rate=Decimal("200.00"), hours=1, booked_total=Decimal("200.00")
+    )
+    plan = PaymentPlanFactory(lead=trip.lead, quote_total=trip.line_total)
+    for kind, amount in ((Charge.Kind.DEPOSIT, "200.00"), (Charge.Kind.REFUND, "200.00")):
+        ChargeFactory(plan=plan, kind=kind, status=Charge.Status.SUCCEEDED, amount=Decimal(amount))
+
+    assert _cells(account)["Paid"] == "0.00"
+
+
 def test_export_respects_filter_and_is_not_paged(account, make_trip):
     for i in range(60):
         _booked(account, make_trip, days=10 + i)
@@ -186,6 +234,46 @@ def test_formula_like_text_is_neutralised_in_every_text_cell(account, make_trip,
     if not text.isspace() and text == text.strip():  # names and addresses are trimmed first
         for column in ("Passenger", "Pickup", "Drop-off"):
             assert cells[column] == "'" + text
+
+
+@pytest.mark.parametrize("start", ["=", "+", "-", "@", "\t", "\r"])
+def test_safe_quotes_every_formula_start(start):
+    assert exports._safe(f"{start}SUM(A1)") == f"'{start}SUM(A1)"
+
+
+@pytest.mark.parametrize("text", ["", "Board offsite", "A-1", "1+1=2", "a@b.co", " =1", "'=1"])
+def test_safe_leaves_ordinary_text_alone(text):
+    assert exports._safe(text) == text
+
+
+def test_cells_staff_or_an_import_wrote_are_neutralised_too(account, make_trip):
+    """Confirmation comes from an import and Vehicle from Settings: guarded like the rest."""
+    _booked(
+        account,
+        make_trip,
+        la_confirmation="=HYPERLINK(1)",
+        vehicle=VehicleTypeFactory(name="+Executive SUV"),
+    )
+
+    cells = _cells(account)
+
+    assert cells["Confirmation"] == "'=HYPERLINK(1)"
+    assert cells["Vehicle"] == "'+Executive SUV"
+    assert cells["Status"] == "Confirmed"
+    assert cells["Time zone"] in ("EST", "EDT")
+
+
+def test_every_text_column_goes_through_the_guard(account, make_trip, monkeypatch):
+    trip = _booked(account, make_trip, la_confirmation="48213", customer_reference="Board")
+    PassengerFactory(reservation=trip, name="Ada Lovelace", is_lead=True)
+    PaymentPlanFactory(lead=trip.lead, card_brand="visa", card_last4="4242")
+    monkeypatch.setattr(exports, "_safe", lambda text: f"<{text}>")
+
+    cells = _cells(account)
+
+    money = {"Total", "Paid"}
+    assert {name for name, cell in cells.items() if not cell.startswith("<")} == money
+    assert cells["Payment method"] == "<Visa ending 4242>"
 
 
 def test_commas_quotes_and_newlines_survive(account, make_trip):

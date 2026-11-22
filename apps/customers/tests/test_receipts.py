@@ -790,3 +790,93 @@ def test_a_negative_balance_prints_as_credit(account, make_trip):
     assert "Credit" in text and "$25.00" in text
     assert "Balance due" not in text
     assert text.count("-$25.00") == 1  # the Goodwill price line, never the balance
+
+
+# --- when a figure may show (`receipts.priced`, `customer_total`) ---------------------------
+
+
+def _shown(account, trip: Reservation) -> tuple:
+    """(Trips row total, spreadsheet Total cell) for the trip, as the customer gets them."""
+    scoped = _scoped(account, trip)
+    cells = csv.reader(io.StringIO(exports.trips_csv(account, trip_ids=[trip.pk])))
+    total = list(cells)[1][exports.HEADER.index("Total")]
+    return selectors.trip_rows([scoped])[0]["total"], total
+
+
+@pytest.mark.parametrize("status", [Lead.Status.QUOTED, Lead.Status.ENGAGED, Lead.Status.BOOKED])
+def test_no_rate_means_no_price_whatever_the_stage(account, make_trip, status):
+    free = make_trip(account, lead__status=status, rate=0)
+    priced = make_trip(account, lead__status=status, rate=185)
+
+    assert receipts.priced(free) is False and receipts.customer_total(free) is None
+    assert receipts.priced(priced) is True
+    assert _shown(account, free) == (None, "")
+    assert not receipts.has_receipt(_finish(free))
+
+
+def test_a_draft_price_on_a_request_closed_unsent_never_shows(account, make_trip):
+    """Staff priced the request, then marked it Lost without sending the quote."""
+    trip = make_trip(account, lead__status=Lead.Status.NEW, rate=185)
+    lead_services.mark_lost(trip.lead, "No availability")
+    trip.refresh_from_db()
+
+    assert selectors.label_key(trip) == "closed"
+    assert receipts.priced(trip) is False
+    assert _shown(account, trip) == (None, "")
+
+
+def test_a_sent_quote_that_closed_keeps_its_figure(account, make_trip):
+    trip = make_trip(
+        account, lead__status=Lead.Status.QUOTED, lead__quote_sent_at=PROCESSED, rate=185
+    )
+    lead_services.mark_lost(trip.lead, "Went elsewhere")
+    trip.refresh_from_db()
+
+    assert selectors.label_key(trip) == "closed"
+    assert _shown(account, trip) == (trip.line_total, f"{trip.line_total:.2f}")
+
+
+def test_a_cancelled_trip_on_an_order_that_never_booked_shows_a_dash(account, make_trip):
+    trip = make_trip(account, lead__status=Lead.Status.QUOTED, rate=185)
+    _cancel(trip)
+
+    assert selectors.label_key(trip) == "cancelled" and trip.booked_total is None
+    assert receipts.customer_total(trip) is None
+    assert _shown(account, trip) == (None, "")
+    assert receipts.has_receipt(_scoped(account, trip)) is False
+
+
+def test_a_booked_trip_cancelled_and_refunded_in_full_still_reads_zero(account, make_trip):
+    trip = _cancel(_booked(account, make_trip))
+
+    assert _shown(account, trip) == (Decimal("0.00"), "0.00")
+
+
+def test_reopening_a_cancelled_booked_order_keeps_its_money_and_receipt(account, make_trip):
+    """Lost to New again (`lead_reopen`): what the customer paid and we kept is still real."""
+    trip = _booked(account, make_trip)
+    _pay(trip, "50.00", kind=Charge.Kind.TRIP, reservation=trip, at=PROCESSED)
+    _cancel(trip)
+    done = _paid_trip(account, make_trip)
+    for lead in (trip.lead, done.lead):
+        lead.status = Lead.Status.NEW
+        lead.save(update_fields=["status"])
+
+    for kept, amount in ((trip, Decimal("50.00")), (done, done.line_total)):
+        scoped = _scoped(account, kept)
+        assert _shown(account, kept) == (amount, f"{amount:.2f}")
+        assert receipts.has_receipt(scoped) is True
+
+
+def test_a_reopened_order_put_back_to_work_is_a_draft_again(account, make_trip):
+    """A trip of a reopened order that staff are pricing afresh shows nothing, as on any
+    New order, though the order once booked."""
+    trip = _booked(account, make_trip)
+    trip.lead.status = Lead.Status.NEW
+    trip.lead.save(update_fields=["status"])
+    trip.trip_status = S.PENDING
+    trip.rate = 240
+    trip.save(update_fields=["trip_status", "rate"])
+
+    assert trip.booked_total is not None
+    assert _shown(account, trip) == (None, "")

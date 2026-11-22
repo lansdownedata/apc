@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Exists, F, OuterRef, Q, QuerySet, Subquery, Value
+from django.db.models import Exists, F, OuterRef, Q, QuerySet, Value
 from django.db.models.functions import Lower, NullIf, Trim
 from django.http import QueryDict
 from django.utils import timezone
@@ -120,33 +120,20 @@ def _matching(trips: QuerySet[Reservation], f: TripFilter) -> QuerySet[Reservati
     return trips
 
 
-def _lead_passenger_name() -> Subquery:
-    """`selectors.lead_passenger` for the database: the lead passenger's name, else the
-    first named one's."""
-    named = (
-        Passenger.objects.alias(clean=Trim("name"))
-        .filter(reservation=OuterRef("pk"))
-        .exclude(clean="")
-        .order_by("-is_lead", "sort", "pk")
-    )
-    return Subquery(named.values("name")[:1])
-
-
 def _in_order(trips: QuerySet[Reservation], tab: str, group: str) -> QuerySet[Reservation]:
     """Upcoming soonest first; every other tab newest first; undated trips last. By the
     trip's own local date and time, the ones the row shows, so a month never splits around
-    trips in two zones. Grouped by passenger or reference: A to Z by that first, the blank
-    group last."""
+    trips in two zones. Grouped by reference: A to Z by that first, the blank group last.
+    (Grouped by passenger the order is by time here; `_by_passenger` does the rest.)"""
     day, clock = F("pickup_date"), F("pickup_time")
     if tab == "upcoming":
         by_time = (day.asc(nulls_last=True), clock.asc(nulls_first=True), "pk")
     else:
         by_time = (day.desc(nulls_last=True), clock.desc(nulls_last=True), "-pk")
-    if group == "month":
+    if group != "reference":
         return trips.order_by(*by_time)
-    title = _lead_passenger_name() if group == "passenger" else F("customer_reference")
-    # Selected, not an alias: the database works a passenger's name out once per trip.
-    return trips.annotate(group_title=NullIf(Lower(Trim(title)), Value(""))).order_by(
+    reference = NullIf(Lower(Trim("customer_reference")), Value(""))
+    return trips.alias(group_title=reference).order_by(
         F("group_title").asc(nulls_last=True), *by_time
     )
 
@@ -161,8 +148,36 @@ def filtered(account: CustomerAccount, f: TripFilter) -> QuerySet[Reservation]:
     return _in_order(found, f.tab, f.group)
 
 
+def _by_passenger(found: QuerySet[Reservation]) -> list[int]:
+    """The ids of `found` (already in time order) grouped by passenger: A to Z by the lead
+    passenger's name (`selectors.lead_passenger`), no name last. Two queries of ids and
+    names over the whole set: a name per trip, sorted here, because the database's own way
+    (a sorted subquery per row) is slow on a long history."""
+    names: dict[int, str] = {}
+    riders = (
+        Passenger.objects.filter(reservation__in=found.order_by().values("pk"))
+        .order_by("-is_lead", "sort", "pk")
+        .values_list("reservation_id", "name")
+    )
+    for trip_id, name in riders:
+        if name.strip():
+            names.setdefault(trip_id, name.strip().casefold())
+    ids = list(found.values_list("pk", flat=True))
+    return sorted(ids, key=lambda pk: (pk not in names, names.get(pk, "")))  # stable
+
+
+def _slice(found: QuerySet[Reservation], f: TripFilter, rows: slice) -> list[Reservation]:
+    """Those `rows` of `found`, in the order the page shows them."""
+    if f.group != "passenger":
+        return list(found[rows])
+    ids = _by_passenger(found)[rows]
+    trips = found.in_bulk(ids)
+    return [trips[pk] for pk in ids]
+
+
 def export_trips(account: CustomerAccount, f: TripFilter) -> list[Reservation]:
-    """Every trip the filter shows, whatever its page, with stops and passengers."""
+    """Every trip the filter shows, whatever its page, with stops and passengers, in the
+    tab's order by time (a spreadsheet has no groups)."""
     trips = list(filtered(account, f))
     selectors.load_details(trips)
     return trips
@@ -258,7 +273,7 @@ def _page(
     trip among them that `kept` does not already hold."""
     start = PAGE_SIZE * (f.page - 1)
     lead_in = 1 if start else 0
-    window = list(found[start - lead_in : start + PAGE_SIZE + 1])
+    window = _slice(found, f, slice(start - lead_in, start + PAGE_SIZE + 1))
     before = window[0] if lead_in and window else None
     shown = window[lead_in : lead_in + PAGE_SIZE]
     selectors.load_details([before, *shown] if before and f.group == "passenger" else shown)

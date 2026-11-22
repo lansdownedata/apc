@@ -290,8 +290,10 @@ def test_next_trip_summary_and_its_own_zone(account, client_as, make_trip):
 
     next_trip = home.home(account)["next_trip"]
 
-    assert next_trip["summary"] == (
-        "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM."
+    # The flight's time in the airport's zone, named: never the viewer's.
+    arriving = f"arriving 8:52 AM {next_trip['zone']}"
+    assert (
+        next_trip["summary"] == f"Executive SUV, 2 passengers. Meeting flight AA 2114, {arriving}."
     )
     assert next_trip["zone"] in ("PST", "PDT")  # the pickup's zone, not the viewer's
     body = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", _page(client_as(account))))
@@ -602,6 +604,17 @@ def test_finished_orders_that_owe_nothing_do_not_wait(account, make_trip):
     assert theirs.pk not in {row.get("lead") for row in data["waiting"]}
 
 
+def test_a_finished_wedding_order_that_owes_never_waits(account, make_trip):
+    """Outside the scope, so not on Home, however its plan reads."""
+    wedding = _finished_order(account, make_trip)
+    trip = wedding.reservations.get()
+    trip.source_leg_id = "early-out"
+    trip.save(update_fields=["source_leg_id"])
+    owing = _finished_order(account, make_trip, days=-40)
+
+    assert [row["lead"] for row in home.home(account)["waiting"]] == [owing.pk]
+
+
 def test_orders_ahead_are_priced_before_finished_ones(account, make_trip):
     behind = [_finished_order(account, make_trip, days=-30 - i) for i in range(3)]
     ahead = [_direct_booking(account, make_trip, days=10 + i) for i in range(4)]
@@ -613,3 +626,114 @@ def test_orders_ahead_are_priced_before_finished_ones(account, make_trip):
     assert asked == [lead.pk for lead in ahead] + [behind[-1].pk]  # the oldest finished one
     # Shown soonest first, so the finished order's old trip leads.
     assert [row["lead"] for row in waiting] == [behind[-1].pk, *(lead.pk for lead in ahead)]
+
+
+# --- wording and structure (deferred 24, 25, 26) --------------------------------------------
+
+
+def _text(body: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", body))
+
+
+def test_a_flight_into_another_zone_is_timed_in_the_airports_zone(account, make_trip):
+    """A New York pickup meeting a flight whose cached time is kept for Chicago's airport."""
+    ord_ = AirportFactory(iata="ORD", city="Chicago", timezone="America/Chicago")
+    trip = _confirmed(account, make_trip, days=12, pickup_timezone="America/New_York", stops=[])
+    airline = AirlineFactory(iata="UA", name="United Airlines")
+    chicago = ZoneInfo("America/Chicago")
+    flight = FlightFactory(
+        airline=airline,
+        flight_number="88",
+        airport=ord_,
+        flight_date=trip.pickup_date,
+        scheduled_at=datetime.combine(trip.pickup_date, time(8, 5), tzinfo=chicago),
+    )
+    Stop.objects.create(
+        reservation=trip,
+        sequence=0,
+        address="10000 W O'Hare Ave",
+        airport=ord_,
+        airline=airline,
+        flight_number="88",
+        flight=flight,
+    )
+
+    summary = home.home(account)["next_trip"]["summary"]
+
+    zone = flight.scheduled_at.astimezone(chicago).tzname()
+    assert zone in ("CST", "CDT")
+    assert summary.endswith(f"Meeting flight UA 88, arriving 8:05 AM {zone}.")
+
+
+def test_next_trip_with_no_date_or_time_yet_says_so_once(account, client_as, make_trip):
+    trip = make_trip(account, lead__status=Lead.Status.BOOKED, trip_status=S.UNASSIGNED)
+    _paid_plan(trip.lead)
+    assert trip.pickup_date is None and trip.pickup_time is None
+
+    next_trip = home.home(account)["next_trip"]
+    assert (next_trip["heading"], next_trip["heading_zone"]) == ("Date to be confirmed", "")
+    assert next_trip["when_note"] == ""
+    text = _text(_page(client_as(account)))
+    assert "Date to be confirmed at" not in text
+    heading = re.search(r"<h1[^>]*>(.*?)</h1>", _page(client_as(account)), re.S).group(1)
+    assert _text(heading).strip() == "Date to be confirmed"
+
+
+def test_next_trip_with_a_date_and_no_time_notes_the_time(account, client_as, make_trip):
+    trip = make_trip(
+        account,
+        lead__status=Lead.Status.BOOKED,
+        trip_status=S.UNASSIGNED,
+        pickup_date=_day(6),
+    )
+    _paid_plan(trip.lead)
+
+    next_trip = home.home(account)["next_trip"]
+    assert next_trip["heading"] == f"{trip.pickup_date:%A, %B} {trip.pickup_date.day}"
+    assert (next_trip["heading_zone"], next_trip["when_note"]) == ("", "Time to be confirmed")
+    body = _page(client_as(account))
+    heading = re.search(r"<h1[^>]*>(.*?)</h1>", body, re.S).group(1)
+    assert _text(heading).strip() == next_trip["heading"]
+    assert "Time to be confirmed" in _text(body)
+
+
+def test_next_trip_with_both_reads_date_at_time_zone(account, client_as, make_trip):
+    trip = _confirmed(account, make_trip, days=4)
+
+    next_trip = home.home(account)["next_trip"]
+    day = f"{trip.pickup_date:%A, %B} {trip.pickup_date.day}"
+    assert (next_trip["heading"], next_trip["when_note"]) == (f"{day} at 9:10 AM", "")
+    assert next_trip["heading_zone"] == next_trip["zone"]
+
+
+def test_an_on_account_quote_is_reviewed_and_booked_not_paid(account, client_as, make_trip):
+    """Billed to an account there is no pay step: the quote page's button is Book."""
+    on_account = _quote(account, make_trip, days=10, lead__billing_group=AccountGroupFactory())
+    card = _quote(account, make_trip, days=20)
+
+    waiting = home.home(account)["waiting"]
+
+    assert [(row["pk"], row["action_label"]) for row in waiting] == [
+        (on_account.pk, "Review and book"),
+        (card.pk, "Review and pay"),
+    ]
+    assert _pay_target(waiting[0]["action_url"]) == ("quote_page", on_account.lead_id)
+    assert "Review and book" in _page(client_as(account))
+
+
+@pytest.mark.parametrize("state", ["empty", "next", "upcoming-only", "past-only", "waiting-only"])
+def test_home_always_has_exactly_one_h1(account, client_as, make_trip, state):
+    if state == "next":
+        _confirmed(account, make_trip)
+    elif state == "upcoming-only":
+        make_trip(account, lead__status=Lead.Status.NEW, pickup_date=_day(9))
+    elif state == "past-only":
+        make_trip(
+            account, lead__status=Lead.Status.BOOKED, trip_status=S.DONE, pickup_date=_day(-9)
+        )
+    elif state == "waiting-only":
+        _quote(account, make_trip)
+
+    body = _page(client_as(account))
+
+    assert len(re.findall(r"<h1[\s>]", body)) == 1

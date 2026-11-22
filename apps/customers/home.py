@@ -42,20 +42,21 @@ def _deposits_held(trips: list[Reservation]) -> dict[int, datetime]:
 
 
 def _meeting(trip: Reservation, first: Stop) -> str:
-    """ "Meeting flight AA 2114, arriving 8:52 AM." for a pickup at an arriving flight; the
-    time only while the cached flight is still expected. One trip, so one query."""
+    """ "Meeting flight AA 2114, arriving 8:52 AM PST." for a pickup at an arriving flight.
+    The time shows only while the cached flight is still expected, in the airport's own
+    zone and always with its abbreviation: never the viewer's. One trip, so one query."""
     stop = Stop.objects.select_related("airport", "airline", "flight").get(pk=first.pk)
     text = f"Meeting flight {stop.flight_label if stop.airline_id else stop.flight_number}"
     at = selectors.expected_flight_at(stop.flight)
     if at:
         zone = ZoneInfo(stop.airport.timezone) if stop.airport.timezone else None
         local = timezone.localtime(at, zone or selectors.trip_zone(trip))
-        text += f", arriving {format_clock(local.time())}"
+        text += f", arriving {format_clock(local.time())} {local.tzname()}"
     return f"{text}."
 
 
 def _summary(trip: Reservation) -> str:
-    """ "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM." """
+    """ "Executive SUV, 2 passengers. Meeting flight AA 2114, arriving 8:52 AM PST." """
     people = f"{trip.passengers} passenger{'' if trip.passengers == 1 else 's'}"
     parts = [f"{trip.vehicle.name}, {people}." if trip.vehicle_id else f"{people.capitalize()}."]
     stops = selectors.stops_of(trip)
@@ -113,30 +114,42 @@ def _note(trip: Reservation, key: str, held: dict[int, datetime]) -> str:
     return ""
 
 
+# How many finished orders that may owe are checked against the scope: room for a few the
+# scope then drops (a wedding order, a farm-in) without ever walking a history.
+_FINISHED_CHECKED = 4 * selectors.WAITING_PAY_CHECKS
+
+
 def _finished_may_owe(account: CustomerAccount, ahead: set[int]) -> list[Lead]:
     """Booked orders with no trip ahead (none of `ahead`, the orders Home already holds)
     whose plan says they may still owe: an unpaid deposit, a failed balance, a balance with
     no saved card, an open trip pay link. Found on the plan and its charges, oldest trip
-    first, never by loading the history; at most as many as `selectors.owing` will price."""
+    first, never by loading the history; at most as many as `selectors.owing` will price.
+
+    Two steps so the database cannot do the dear part first: the plan flags pick a few
+    orders (usually none: one query), and only those are checked against the scope."""
     first_day = (
         Reservation.objects.filter(lead_id=OuterRef("pk"), pickup_date__isnull=False)
         .order_by("pickup_date")
         .values("pickup_date")[:1]
     )
-    return list(
-        selectors.orders_in_scope(account)
-        .filter(selectors.may_owe())
+    maybe = list(
+        Lead.objects.filter(selectors.booked_or_billed(account), selectors.may_owe())
         .exclude(pk__in=ahead)
-        .select_related("payment")
         .annotate(first_day=Subquery(first_day))
-        .order_by(F("first_day").asc(nulls_last=True), "pk")[: selectors.WAITING_PAY_CHECKS]
+        .order_by(F("first_day").asc(nulls_last=True), "pk")
+        .values_list("pk", flat=True)[:_FINISHED_CHECKED]
     )
+    if not maybe:
+        return []
+    theirs = selectors.orders_in_scope(account).select_related("payment").in_bulk(maybe)
+    return [theirs[pk] for pk in maybe if pk in theirs][: selectors.WAITING_PAY_CHECKS]
 
 
 def home(account: CustomerAccount) -> dict:
-    """Home (spec §6.1). `next_trip`: the soonest confirmed-or-later trip with its long
-    date and `summary` line, or None. `waiting`: one row per order with a
-    quote ready (Review and pay) or money owed (Pay now), soonest first. `upcoming`: every
+    """Home (spec §6.1). `next_trip`: the soonest confirmed-or-later trip with its heading
+    (`selectors.heading`) and `summary` line, or None. `waiting`: one row per order with a
+    quote ready (Review and pay, or Review and book on account) or money owed (Pay now),
+    soonest first. `upcoming`: every
     upcoming trip but quotes (they wait above), requests included, soonest first.
     `history_banner`: the past-trip count, only before the account's first Home visit (the
     view stamps `history_banner_seen_at` on it). `has_trips`: whether the account has any
@@ -202,7 +215,7 @@ def home(account: CustomerAccount) -> dict:
         if nxt is None
         else {
             **rows[nxt.pk],
-            "long_date": selectors.long_date(nxt),
+            **selectors.heading(nxt, rows[nxt.pk]),
             "summary": _summary(nxt),
             "can_ask_change": requests.can_ask(nxt, keys[nxt.pk])
             and not any(row["kind"] == "change" for row in requests.pending(account, nxt)),

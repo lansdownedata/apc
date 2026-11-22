@@ -71,16 +71,24 @@ _DETAILS = (
 )
 
 
+def booked_or_billed(account: CustomerAccount, lead: str = "") -> Q:
+    """Orders the account's contact booked or is billed for, as a filter on `Lead` (or,
+    with `lead="lead__"`, on a trip through its order). Wider than the scope: `_in_scope`
+    takes the weddings and farm-ins out. On its own only to narrow a query cheaply before
+    `orders_in_scope` decides."""
+    contact_id = account.contact_id
+    return Q(**{f"{lead}contact_id": contact_id}) | Q(**{f"{lead}billing_contact_id": contact_id})
+
+
 def _in_scope(account: CustomerAccount, lead: str) -> Q:
     """The scope, as a filter on `Lead` (`lead=""`) or on a trip through its order
     (`lead="lead__"`): orders the account's contact booked or is billed for. Never a
     wedding order (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
     (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
     have their own portals."""
-    contact_id = account.contact_id
     order_pk = OuterRef("lead_id" if lead else "pk")
     return (
-        (Q(**{f"{lead}contact_id": contact_id}) | Q(**{f"{lead}billing_contact_id": contact_id}))
+        booked_or_billed(account, lead)
         & ~Exists(_wedding_trips().filter(lead_id=order_pk))
         & ~Q(**{f"{lead}contact__company__is_affiliate_account": True})
     )
@@ -562,8 +570,11 @@ def owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
 def pay_action(lead: Lead, owed: tuple[str, Decimal] | None) -> tuple[str, str]:
     """(url, button label) for an order waiting on the customer. Both pages are the
     existing token-keyed ones; a quote is reviewed before it is paid, money owed on a
-    booked order (`owed`, from `owing`) goes straight to the pay page."""
+    booked order (`owed`, from `owing`) goes straight to the pay page. A quote billed to an
+    account has no pay step (the quote page's button is Book), so its label says so."""
     token = make_deposit_token(lead)
     if owed is not None:
         return reverse("quote_pay", args=[token]), "Pay now"
-    return reverse("quote_page", args=[token]), "Review and pay"
+    return reverse("quote_page", args=[token]), (
+        "Review and book" if lead.on_account else "Review and pay"
+    )
