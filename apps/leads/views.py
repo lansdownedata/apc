@@ -22,7 +22,6 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from apps.accounts.permissions import payment_access_required
 from apps.billing import selectors as billing_selectors
 from apps.contacts import services as contact_services
 from apps.contacts.models import Contact
@@ -31,9 +30,6 @@ from apps.core.phone import to_e164
 from apps.dispatch import farm_in_drawer
 from apps.dispatch import selectors as dispatch_selectors
 from apps.dispatch.models import FarmInRequest
-from apps.integrations import la_sync
-from apps.integrations.la_sync import IDEMPOTENCY_PREFIX
-from apps.integrations.models import ZapEvent
 from apps.messaging import events
 from apps.messaging import history as message_history
 from apps.notifications.models import Notification
@@ -61,22 +57,6 @@ from .models import QUOTE_NUMBER_BASE, QUOTE_PREFIX, Lead, LeadContact
 ZERO = Decimal("0.00")
 
 logger = logging.getLogger(__name__)
-
-
-def _la_state(rows: list[dict]) -> str:
-    """One word for the header chip — the worst thing that happened to any trip.
-
-    "sent" needs every trip through; a booking that was never attempted must not hide
-    behind the ones that were.
-    """
-    results = {row["event"].result if row["event"] else "" for row in rows}
-    if ZapEvent.Result.ERROR in results:
-        return "error"
-    if ZapEvent.Result.PREVIEW in results:
-        return "preview"
-    if rows and results == {ZapEvent.Result.SUCCESS}:
-        return "sent"
-    return "unsent"
 
 
 @login_required
@@ -231,30 +211,6 @@ def lead_detail(request, pk):
     # A linked set is several trips in the database and one line on the screen (APC-14).
     reservation_lines = groups.as_lines(reservations)
 
-    la_events: dict[int, ZapEvent] = {}
-    events = ZapEvent.objects.filter(lead=lead, action=ZapEvent.Action.CREATE_RESERVATION)
-    for event in events:
-        key = event.idempotency_key.removeprefix(IDEMPOTENCY_PREFIX)
-        if key.isdigit():
-            la_events[int(key)] = event
-    la_sync_rows = [
-        {
-            "reservation": res,
-            "event": la_events.get(res.pk),
-            "payload_dom_id": f"la-payload-{res.pk}",
-        }
-        for res in reservations
-    ]
-    la_configured = la_sync.limoanywhere.is_configured()
-    can_resend_la = any(
-        row["event"]
-        and (
-            row["event"].result == ZapEvent.Result.ERROR
-            or (row["event"].result == ZapEvent.Result.PREVIEW and la_configured)
-        )
-        for row in la_sync_rows
-    )
-
     wedding_state = _wedding_state(lead)
     farm_in_req = lead.farm_in
     context = {
@@ -275,9 +231,6 @@ def lead_detail(request, pk):
         **payment_reports.cleaning_hold(lead),
         "wedding_open": request.GET.get("wedding") == "1",
         "reservations": reservations,
-        "la_sync_rows": la_sync_rows,
-        "la_state": _la_state(la_sync_rows),
-        "can_resend_la": can_resend_la,
         "payment": getattr(lead, "payment", None),
         "balances": payment_reports.order_balances_with_remaining(lead),
         # The Cancel & refund dialog's trips (APC-127), as a JSON string for the attribute.
@@ -507,16 +460,6 @@ def lead_mark_booked(request, pk: int) -> HttpResponse:
     if _wants_json(request):
         return JsonResponse({"ok": True, "status": lead.status})
     messages.success(request, "Order booked.")
-    return redirect("lead_detail", pk=pk)
-
-
-@login_required
-@payment_access_required
-@require_POST
-def lead_resend_la(request, pk: int) -> HttpResponse:
-    """Manually re-push every reservation on the lead to LimoAnywhere."""
-    lead = get_object_or_404(Lead, pk=pk)
-    la_sync.push_lead_bookings(lead)
     return redirect("lead_detail", pk=pk)
 
 

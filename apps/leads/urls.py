@@ -14,7 +14,6 @@ urlpatterns = [
     path("<int:pk>/reopen/", views.lead_reopen, name="lead_reopen"),
     path("<int:pk>/send-quote/", views.lead_send_quote, name="lead_send_quote"),
     path("<int:pk>/reissue-quote/", views.lead_reissue_quote, name="lead_reissue_quote"),
-    path("<int:pk>/resend-la/", views.lead_resend_la, name="lead_resend_la"),
     path("<int:pk>/people/add/", views.lead_people_add, name="lead_people_add"),
     path(
         "<int:pk>/people/<int:row_pk>/remove/",
