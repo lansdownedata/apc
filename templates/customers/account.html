@@ -1,0 +1,75 @@
+{% extends "customers/base.html" %}
+{% comment %}
+  Account (mockup 8): "Your details" and "Password" only. Name and mobile save through
+  `customers.services.update_details`; email and company are read-only text (they tie the
+  account to its history and billing), so they are never inputs. The receipts-copy and saved
+  cards cards are a later release and are not drawn. No "Last changed" line: the account
+  does not record when its password was set.
+{% endcomment %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<div class="mx-auto w-full max-w-3xl px-4 pb-16 pt-6 sm:px-6 sm:pt-10">
+  <h1 class="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink sm:text-[28px]">Account</h1>
+
+  <form method="post" action="{% url 'customers:account' %}" novalidate class="card mt-6 p-5 sm:p-6">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="details">
+    <h2 class="font-display text-[16px] font-semibold text-ink">Your details</h2>
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      <div>
+        <label for="acc-name" class="mb-1 block text-[12px] font-medium text-muted">Name</label>
+        <input id="acc-name" type="text" name="name" value="{{ details.name.value|default:'' }}" autocomplete="name" required
+               class="field{% if details.name.errors %} field-error{% endif %}">
+        {% for e in details.name.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+      <div>
+        <span class="mb-1 block text-[12px] font-medium text-muted">Company</span>
+        <p class="py-2.5 text-[13.5px] text-ink">{{ company|default:"None" }}</p>
+        <p class="text-[12px] text-muted">Contact us to change this: <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a></p>
+      </div>
+      <div>
+        <label for="acc-mobile" class="mb-1 block text-[12px] font-medium text-muted">Mobile</label>
+        <input id="acc-mobile" type="tel" name="mobile" value="{{ details.mobile.value|default:'' }}" autocomplete="tel"
+               class="field num{% if details.mobile.errors %} field-error{% endif %}">
+        {% for e in details.mobile.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+      <div>
+        <span class="mb-1 block text-[12px] font-medium text-muted">Email (sign-in)</span>
+        <p class="py-2.5 text-[13.5px] text-ink [overflow-wrap:anywhere]">{{ email }}</p>
+        <p class="text-[12px] text-muted">Contact us to change this: <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a></p>
+      </div>
+    </div>
+    <button type="submit" class="btn-gold mt-5 rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold">Save changes</button>
+  </form>
+
+  <form method="post" action="{% url 'customers:account' %}" novalidate class="card mt-5 p-5 sm:p-6">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="password">
+    <input type="email" name="username" value="{{ email }}" autocomplete="username" readonly hidden>
+    <h2 class="font-display text-[16px] font-semibold text-ink">Password</h2>
+    {% if password.non_field_errors %}<p role="alert" class="mt-3 text-[12.5px] text-rose-700">{{ password.non_field_errors|join:" " }}</p>{% endif %}
+    <div class="mt-4 grid gap-4 sm:max-w-sm">
+      <div>
+        <label for="acc-current" class="mb-1 block text-[12px] font-medium text-muted">Current password</label>
+        <input id="acc-current" type="password" name="current_password" autocomplete="current-password" required
+               class="field{% if password.current_password.errors %} field-error{% endif %}">
+        {% for e in password.current_password.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+      <div>
+        <label for="acc-new1" class="mb-1 block text-[12px] font-medium text-muted">New password</label>
+        <input id="acc-new1" type="password" name="new_password1" autocomplete="new-password" required aria-describedby="acc-new-hint"
+               class="field{% if password.new_password1.errors %} field-error{% endif %}">
+        <p id="acc-new-hint" class="mt-1 text-[12px] text-muted">At least 10 characters.</p>
+        {% for e in password.new_password1.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+      <div>
+        <label for="acc-new2" class="mb-1 block text-[12px] font-medium text-muted">Confirm new password</label>
+        <input id="acc-new2" type="password" name="new_password2" autocomplete="new-password" required
+               class="field{% if password.new_password2.errors %} field-error{% endif %}">
+        {% for e in password.new_password2.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
+      </div>
+    </div>
+    <button type="submit" class="btn-gold mt-5 rounded-lg px-4 py-2.5 text-[13.5px] font-semibold focus-gold">Change password</button>
+  </form>
+</div>
+{% endblock %}

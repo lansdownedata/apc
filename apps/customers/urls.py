@@ -13,6 +13,7 @@ urlpatterns = [
     path("trips/<int:pk>/cancel/", views.ask_cancel, name="ask_cancel"),
     path("trips/export.csv", views.export, name="export"),
     path("trips/reference/", views.set_reference, name="set_reference"),
+    path("settings/", views.account, name="account"),
     path("request/", views.request_trip, name="request_trip"),
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),

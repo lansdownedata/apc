@@ -42,7 +42,21 @@ class SignupForm(forms.Form):
         return phone
 
 
-def _validators() -> list:
+class DetailsForm(forms.Form):
+    """The Account page's name and mobile. The mobile may be blank, which leaves the number
+    on file (`services.update_details`)."""
+
+    name = forms.CharField(max_length=200, error_messages={"required": "Enter your name."})
+    mobile = forms.CharField(max_length=40, required=False)
+
+    def clean_mobile(self) -> str:
+        mobile = self.cleaned_data.get("mobile", "").strip()
+        if mobile and to_e164(mobile) is None:
+            raise ValidationError(INVALID_PHONE)
+        return mobile
+
+
+def password_validators() -> list:
     """The site's password validators, with the customer screen's longer minimum."""
     rest = [
         v for v in get_default_password_validators() if not isinstance(v, MinimumLengthValidator)
@@ -68,9 +82,16 @@ class CustomerPasswordForm(SetPasswordForm):
         password = self.cleaned_data.get(password_field_name)
         if password:
             try:
-                validate_password(password, user, password_validators=_validators())
+                validate_password(password, user, password_validators=password_validators())
             except ValidationError as error:
                 self.add_error("new_password1", error)
+
+
+class ChangePasswordForm(CustomerPasswordForm):
+    """The Account page's password card: the current password, then the new one twice,
+    held to the same rules as the set-password screens (judged against the account)."""
+
+    current_password = forms.CharField(strip=False, required=False, widget=forms.PasswordInput)
 
 
 def request_occasions() -> QuerySet[ServiceType]:

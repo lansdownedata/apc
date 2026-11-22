@@ -32,6 +32,7 @@ from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
+from apps.accounts.forms import INVALID_PHONE
 from apps.contacts import services as contacts
 from apps.contacts.models import Contact
 from apps.core import outbound
@@ -223,17 +224,51 @@ def register(account: CustomerAccount, password: str) -> CustomerAccount:
     return account
 
 
+WRONG_CURRENT = "Current password is incorrect."
+
+
 def change_password(account: CustomerAccount, current: str, new: str) -> None:
     """A signed-in customer's new password, after the current one. Every open session ends
-    with it (the session holds a hash of the password), so the caller signs them in again."""
-    if not account.check_password(current):
-        raise CustomerError("That isn't your current password.")
+    with it (the session holds a hash of the password), so the caller signs them in again.
+
+    A wrong current password is a failed attempt like a wrong sign-in one: it counts toward
+    the lockout, and a locked account is refused with the same sentence. The new password
+    meets the customer rules (`forms.password_validators`), judged against the account."""
+    from .forms import password_validators  # forms imports the public site; keep it lazy
+
+    now = timezone.now()
+    locked = account.locked_until is not None and account.locked_until > now
+    if locked or not account.check_password(current):
+        if current and not locked:
+            _record_failure(account, now)
+        raise CustomerError(WRONG_CURRENT)
     try:
-        validate_password(new)
+        validate_password(new, account, password_validators=password_validators())
     except ValidationError as exc:
         raise CustomerError(" ".join(exc.messages)) from None
     account.set_password(new)
-    account.save(update_fields=["password", "updated_at"])
+    account.failed_logins, account.locked_until = 0, None
+    account.save(update_fields=["password", "failed_logins", "locked_until", "updated_at"])
+
+
+def update_details(account: CustomerAccount, *, name: str, mobile: str) -> None:
+    """A customer's own name and mobile, written the way a staff edit is
+    (`contacts.apply_booking_edits`, so the change is audited and the number is validated
+    and stored as a contact phone). Email and company are never passed: they are the link
+    to the customer's history and billing. A blank mobile leaves the number on file, as it
+    does for staff; clearing one is done on the staff contact profile."""
+    name, mobile = (name or "").strip(), (mobile or "").strip()
+    if not name:
+        raise CustomerError("Enter your name.")
+    number = to_e164(mobile) if mobile else ""
+    if mobile and number is None:
+        raise CustomerError(INVALID_PHONE)
+    contact = account.contact
+    with transaction.atomic():
+        contacts.apply_booking_edits(contact, name=name, phone=number or "")
+        if number and contact.phone != number:
+            # The customer's own number is the one we text; staff's "use for texting".
+            contacts.use_for_texting(contact.phones.get(number=number))
 
 
 def _record_failure(account: CustomerAccount, now: datetime) -> None:

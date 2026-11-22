@@ -20,6 +20,7 @@ from django.http import (
     Http404,
     HttpRequest,
     HttpResponse,
+    HttpResponseBadRequest,
     HttpResponseNotAllowed,
     JsonResponse,
     QueryDict,
@@ -33,11 +34,19 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_POST
 
 from apps.core.net import client_ip
+from apps.core.templatetags.phone_filters import phone_display
 from apps.planners.selectors import dispatch_phone
 
 from . import exports, receipts, requests, selectors, services, trip_detail
 from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
-from .forms import RIDERS, CustomerPasswordForm, SignupForm, TripRequestForm
+from .forms import (
+    RIDERS,
+    ChangePasswordForm,
+    CustomerPasswordForm,
+    DetailsForm,
+    SignupForm,
+    TripRequestForm,
+)
 from .models import CustomerAccount
 from .tokens import customer_reset_token, customer_token
 
@@ -490,3 +499,56 @@ def export(request: HttpRequest) -> HttpResponse:
     filename = f"all-pro-charter-trips-{timezone.localdate():%Y-%m-%d}.csv"
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@customer_required
+@sensitive_post_parameters("current_password", "new_password1", "new_password2")
+def account(request: HttpRequest) -> HttpResponse:
+    """Account (mockup 8): the customer's name and mobile, and their password. Email and
+    company are shown, never posted. Two forms on one page, told apart by `action`; each
+    re-renders with what was typed and the errors beside the fields, or redirects with a
+    toast. Changing the password ends every session, so this one is signed in again."""
+    customer = request.customer
+    contact = customer.contact
+    details = DetailsForm(
+        initial={
+            "name": contact.name,
+            "mobile": phone_display(contact.phone) if contact.phone else "",
+        }
+    )
+    password = ChangePasswordForm(customer)
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "details":
+            details = DetailsForm(request.POST)
+            if details.is_valid():
+                services.update_details(customer, **details.cleaned_data)
+                messages.success(request, "Details saved.")
+                return redirect("customers:account")
+        elif action == "password":
+            password = ChangePasswordForm(customer, request.POST)
+            if password.is_valid():
+                try:
+                    services.change_password(
+                        customer,
+                        password.cleaned_data["current_password"],
+                        password.cleaned_data["new_password1"],
+                    )
+                except services.CustomerError as error:
+                    password.add_error("current_password", str(error))
+                else:
+                    sign_in(request, customer)
+                    messages.success(request, "Password changed.")
+                    return redirect("customers:account")
+        else:
+            return HttpResponseBadRequest()
+    return _page(
+        request,
+        "customers/account.html",
+        {
+            "details": details,
+            "password": password,
+            "email": customer.email,
+            "company": contact.company.name if contact.company else "",
+        },
+    )
