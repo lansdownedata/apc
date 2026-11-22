@@ -262,9 +262,8 @@ def test_engaged_is_a_legal_transition_from_quoted_and_leads_to_booked_or_lost()
 
 
 def test_owed_alone_would_ask_an_engaged_customer_for_a_second_hold():
-    """`_owed` resolves from the ledger, and an authorization deliberately writes no
+    """`owed` resolves from the ledger, and an authorization deliberately writes no
     ledger entry — so the raw calculation still thinks the deposit is outstanding."""
-    from apps.leads.views import _owed, _pay_state
 
     plan = _authorizable_plan()
     _authorize(plan)
@@ -272,9 +271,9 @@ def test_owed_alone_would_ask_an_engaged_customer_for_a_second_hold():
     lead.refresh_from_db()
 
     # the underlying calculation still says "deposit owed"...
-    assert _owed(lead) == (Charge.Kind.DEPOSIT, plan.deposit_amount)
+    assert services.owed(lead) == (Charge.Kind.DEPOSIT, plan.deposit_amount)
     # ...and the state gate is the only thing standing between that and a second hold
-    assert _pay_state(lead) == (None, Decimal("0.00"))
+    assert services.pay_state(lead) == (None, Decimal("0.00"))
 
 
 def test_record_payment_rejects_an_authorized_intent():

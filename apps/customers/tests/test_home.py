@@ -368,7 +368,7 @@ def test_home_query_count(account, client_as, make_trips, django_assert_max_num_
     assert len(response.context["upcoming"]) > 5
 
 
-# `leads.views._pay_state` reads the ledger: about 11 queries for each order it is asked.
+# `payments.services.pay_state` reads the ledger: about 11 queries for each order it is asked.
 PAY_CHECK_QUERIES = 11
 
 
@@ -391,7 +391,7 @@ def test_only_the_soonest_orders_that_may_owe_are_priced(
     soonest = {lead.pk for lead in leads[-selectors.WAITING_PAY_CHECKS :]}
     client = client_as(account)
 
-    with patch.object(selectors, "_pay_state", wraps=selectors._pay_state) as pay_state:
+    with patch.object(selectors, "pay_state", wraps=selectors.pay_state) as pay_state:
         with django_assert_max_num_queries(12 + selectors.WAITING_PAY_CHECKS * PAY_CHECK_QUERIES):
             response = client.get(HOME)
 

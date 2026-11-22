@@ -28,10 +28,9 @@ from apps.contacts.models import Contact
 from apps.core import outbound
 from apps.leads.models import QUOTE_PREFIX, Lead
 from apps.leads.services import make_deposit_token
-from apps.leads.views import _pay_state
 from apps.payments import trip_money
 from apps.payments.models import Charge, PaymentPlan
-from apps.payments.services import TRIP_MONEY_KINDS
+from apps.payments.services import TRIP_MONEY_KINDS, pay_state
 from apps.planners.selectors import DISPATCHED_STATUSES
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.public.wedding import format_clock
@@ -360,7 +359,7 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
     (it failed, or it is due with no saved card: `payments.tasks.charge_due_balances`). A
     balance scheduled on a saved card is not waiting on the customer.
 
-    The kind and amount are the pay page's own answer (`leads.views._pay_state`). That reads
+    The kind and amount are the pay page's own answer (`payments.services.pay_state`). That reads
     the ledger, about 11 queries an order, so only an order whose plan flags or an open trip
     link say it may owe is asked, and only the first `WAITING_PAY_CHECKS` of those in the
     order given (Home passes soonest trip ahead first); every other order costs nothing."""
@@ -394,7 +393,7 @@ def _owing(leads: list[Lead]) -> dict[int, tuple[str, Decimal]]:
             candidates.append((lead, uncollected))
     owing = {}
     for lead, uncollected in candidates[:WAITING_PAY_CHECKS]:
-        kind, amount = _pay_state(lead)
+        kind, amount = pay_state(lead)
         if kind in (Charge.Kind.DEPOSIT, Charge.Kind.TRIP) or (
             kind == Charge.Kind.BALANCE and uncollected
         ):

@@ -378,3 +378,34 @@ def test_a_private_tail_number_is_not_offered_for_verifying(db):
 
     fresh = Reservation.objects.prefetch_related("stops__airline").get(pk=res.pk)
     assert fresh.flight_summary is None
+
+
+# --- the trip reference and its inverse --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,pk",
+    [
+        ("APC-600412", 412),
+        ("apc-600412", 412),
+        ("  APC 600412 ", 412),
+        ("APC600412", 412),
+        ("600412", 412),
+        ("APC-600000", None),  # the base itself is no trip
+        ("APC-12", None),
+        ("APC-", None),
+        ("APC-abc", None),
+        ("APC--1", None),
+        ("APC-6004１２", None),  # full-width digits are not a reference
+        ("APC-²", None),
+        ("APC-" + "9" * 19, None),  # past a BIGINT
+        ("", None),
+    ],
+)
+def test_pk_from_reference_reads_only_a_trip_reference(text, pk):
+    assert Reservation.pk_from_reference(text) == pk
+
+
+def test_pk_from_reference_is_the_inverse_of_reference():
+    trip = ReservationFactory()
+    assert Reservation.pk_from_reference(trip.reference) == trip.pk

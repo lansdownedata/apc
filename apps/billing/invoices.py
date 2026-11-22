@@ -11,7 +11,7 @@ from django.db.models import Prefetch, Q
 from django.utils import timezone
 
 from apps.reservations.models import Reservation, Stop
-from apps.reservations.processing import _day, _reference_pk, _short, _with_route
+from apps.reservations.processing import _day, _short, _with_route
 
 from . import qbo_sync
 from . import terms as terms_module
@@ -147,7 +147,7 @@ def ready_queryset(filters: BillingFilters):
         qs = qs.filter(pickup_date__lte=filters.date_to)
     if filters.q:
         found = Q(lead__contact__name__icontains=filters.q)
-        pk = _reference_pk(filters.q)
+        pk = Reservation.pk_from_reference(filters.q)
         if pk is not None:
             found |= Q(pk=pk)
         qs = qs.filter(found)
