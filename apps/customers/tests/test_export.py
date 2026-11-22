@@ -121,21 +121,49 @@ def test_paid_is_what_the_trip_allocated_and_the_card_is_named(account, make_tri
     trip = _booked(
         account, make_trip, rate=Decimal("200.00"), hours=1, booked_total=Decimal("200.00")
     )
-    plan = PaymentPlanFactory(
-        lead=trip.lead,
-        quote_total=trip.line_total,
-        card_brand="visa",
-        card_last4="4242",
-    )
-    ChargeFactory(
-        plan=plan,
-        kind=Charge.Kind.DEPOSIT,
-        status=Charge.Status.SUCCEEDED,
-        amount=Decimal("100.00"),
-    )
+    plan = PaymentPlanFactory(lead=trip.lead, quote_total=trip.line_total)
+    _card_charge(plan, "visa", "4242")
     cells = _cells(account)
     assert cells["Paid"] == "100.00"
     assert cells["Payment method"] == "Visa ending 4242"
+
+
+def _card_charge(plan, brand: str = "", last4: str = "", **kw) -> Charge:
+    kw.setdefault("kind", Charge.Kind.DEPOSIT)
+    kw.setdefault("status", Charge.Status.SUCCEEDED)
+    kw.setdefault("amount", Decimal("100.00"))
+    return ChargeFactory(plan=plan, card_brand=brand, card_last4=last4, **kw)
+
+
+def test_the_card_on_file_is_not_named_when_nothing_was_paid(account, make_trip):
+    """The order's card on file is the one the next charge will use, not one that paid."""
+    trip = _booked(account, make_trip)
+    plan = PaymentPlanFactory(lead=trip.lead, card_brand="visa", card_last4="4242")
+    _card_charge(plan, "visa", "4242", status=Charge.Status.FAILED)
+    assert _cells(account)["Payment method"] == ""
+
+
+def test_a_payment_with_no_card_on_record_says_card(account, make_trip):
+    trip = _booked(account, make_trip)
+    plan = PaymentPlanFactory(lead=trip.lead, card_brand="visa", card_last4="4242")
+    _card_charge(plan)
+    assert _cells(account)["Payment method"] == "Card"
+
+
+def test_an_order_paid_by_two_cards_names_neither(account, make_trip):
+    trip = _booked(account, make_trip)
+    plan = PaymentPlanFactory(lead=trip.lead)
+    _card_charge(plan, "visa", "4242")
+    _card_charge(plan, "amex", "0005", kind=Charge.Kind.BALANCE)
+    assert _cells(account)["Payment method"] == "Card"
+
+
+def test_a_refund_does_not_change_the_card_that_paid(account, make_trip):
+    trip = _booked(account, make_trip)
+    plan = PaymentPlanFactory(lead=trip.lead)
+    _card_charge(plan, "visa", "4242")
+    _card_charge(plan, kind=Charge.Kind.REFUND, amount=Decimal("10.00"))
+    assert _cells(account)["Payment method"] == "Visa ending 4242"
 
 
 def test_an_order_billed_to_an_account_says_account(account, make_trip):
@@ -266,7 +294,7 @@ def test_cells_staff_or_an_import_wrote_are_neutralised_too(account, make_trip):
 def test_every_text_column_goes_through_the_guard(account, make_trip, monkeypatch):
     trip = _booked(account, make_trip, la_confirmation="48213", customer_reference="Board")
     PassengerFactory(reservation=trip, name="Ada Lovelace", is_lead=True)
-    PaymentPlanFactory(lead=trip.lead, card_brand="visa", card_last4="4242")
+    _card_charge(PaymentPlanFactory(lead=trip.lead), "visa", "4242")
     monkeypatch.setattr(exports, "_safe", lambda text: f"<{text}>")
 
     cells = _cells(account)
@@ -339,8 +367,9 @@ def test_trips_page_offers_both_export_buttons(account, client_as, make_trip):
 
 # Session, account, last seen, the trips with their stops and passengers, the trips' own
 # charges (7); then `trip_money.allocations` for every order at once: prepaid sums, frozen
-# shares, the orders' trips (3). Fixed: it grows with neither trips nor orders.
-EXPORT_QUERIES = 10
+# shares, the orders' trips (3); and the cards that paid, for every order at once (1).
+# Fixed: it grows with neither trips nor orders.
+EXPORT_QUERIES = 11
 
 
 def test_export_query_count_with_60_rows(

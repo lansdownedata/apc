@@ -470,12 +470,19 @@ def _row(trip: Reservation, kept: dict[int, Decimal]) -> dict:
     stops = stops_of(trip)
     day = trip.pickup_date
     text, tone = LABELS[label_key(trip)]
+    date_text = f"{day:%a, %b} {day.day}" if day else "Date to be confirmed"
+    zone = trip.pickup_tz_label
+    timed = trip.pickup_time is not None
+    clock = f"{format_clock(trip.pickup_time)} {zone}" if timed else "Time to be confirmed"
     return {
         "pk": trip.pk,
-        "date": f"{day:%a, %b} {day.day}" if day else "Date to be confirmed",
-        "time": format_clock(trip.pickup_time) if trip.pickup_time else "Time to be confirmed",
+        "date": date_text,
+        "time": format_clock(trip.pickup_time) if timed else "Time to be confirmed",
         # The pickup zone on the trip's own day; blank zone -> the business zone.
-        "zone": trip.pickup_tz_label,
+        "zone": zone,
+        # What a list prints: the time with its zone, and never a zone after no time.
+        "clock": clock,
+        "when": f"{date_text} · {clock}" if day or timed else "Date and time to be confirmed",
         "route": _route(trip, stops),
         "passenger": lead_passenger(trip),
         # Raw, for search and export; the label says which kind it is (mockup 2: an

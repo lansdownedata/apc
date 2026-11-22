@@ -400,6 +400,8 @@ ROW_KEYS = {
     "date",
     "time",
     "zone",
+    "clock",
+    "when",
     "route",
     "passenger",
     "confirmation",
@@ -439,6 +441,8 @@ def test_trip_row(account, make_trip):
         "date": "Wed, Nov 18",
         "time": "6:15 AM",
         "zone": "EST",
+        "clock": "6:15 AM EST",
+        "when": "Wed, Nov 18 · 6:15 AM EST",
         "route": "Arlington, VA to Dulles (IAD)",
         "passenger": "Dana Whitfield",
         "confirmation": trip.reference,
@@ -484,6 +488,9 @@ def test_thin_trip_row_renders():
     assert row["route"] == "Route to be confirmed"
     assert row["date"] == "Date to be confirmed"
     assert row["time"] == "Time to be confirmed"
+    # No zone after a time that is not set, and one phrase when neither is.
+    assert row["clock"] == "Time to be confirmed"
+    assert row["when"] == "Date and time to be confirmed"
     assert row["passenger"] == ""
 
 

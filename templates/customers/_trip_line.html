@@ -8,7 +8,7 @@
 {% url 'customers:trip' row.pk as trip_url %}
 <li class="border-t border-line first:border-t-0">
   {% if trip_url and not actionable %}<a href="{{ trip_url }}" class="group -mx-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 rounded-lg px-2 py-3.5 transition-colors hover:bg-surface2 focus-gold sm:grid-cols-[11rem_minmax(0,1fr)_auto_auto]">{% else %}<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 py-3.5 sm:grid-cols-[11rem_minmax(0,1fr)_auto_auto]">{% endif %}
-    <p class="col-span-2 text-[13px] font-semibold text-ink num sm:col-span-1 sm:text-[13.5px]">{{ row.date }} · {{ row.time }} {{ row.zone }}</p>
+    <p class="col-span-2 text-[13px] font-semibold text-ink num sm:col-span-1 sm:text-[13.5px]">{{ row.when }}</p>
     <div class="min-w-0">
       <p class="text-[14px] font-semibold text-ink [overflow-wrap:anywhere]">{{ row.route }}</p>
       {% if row.note %}<p class="mt-0.5 text-[12.5px] text-muted">{{ row.note }}</p>{% endif %}

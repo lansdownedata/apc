@@ -24,7 +24,7 @@ from apps.leads.factories import VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.payments import trip_money
 from apps.payments.factories import ChargeFactory
-from apps.payments.models import Charge, PaymentPlan
+from apps.payments.models import Charge, JournalEntry, PaymentPlan
 from apps.reservations import processing
 from apps.reservations.factories import (
     PassengerFactory,
@@ -111,9 +111,11 @@ def _pages(data: bytes) -> int:
 
 
 def _text(data: bytes) -> str:
-    """Every content stream of the PDF, inflated and read as the core fonts' encoding."""
+    """Every content stream of the PDF, inflated and read as the core fonts' encoding.
+    fpdf2 writes `stream\n<data>\nendstream`: a `\r?` here would eat a deflated stream's
+    last byte when it happens to be 0x0D, and that stream would no longer inflate."""
     out = []
-    for raw in re.findall(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+    for raw in re.findall(rb"stream\n(.*?)\nendstream", data, re.S):
         try:
             out.append(zlib.decompress(raw).decode("cp1252", "replace"))
         except zlib.error:
@@ -275,16 +277,16 @@ def test_no_receipt_for_nothing(account, make_trip):
 
 
 @pytest.mark.parametrize(
-    "build",
+    ("build", "has_one"),
     [
-        lambda a, m: _late_cancel(a, m, processed=False),
-        lambda a, m: _late_cancel(a, m, processed=True),
-        lambda a, m: _no_show(a, m, processed=False),
-        lambda a, m: _no_show(a, m, processed=True),
-        lambda a, m: _cancel(_booked(a, m)),
-        lambda a, m: _kept_cancel(a, m),
-        lambda a, m: _paid_trip(a, m),
-        lambda a, m: _finish(_booked(a, m), processed=False),
+        (lambda a, m: _late_cancel(a, m, processed=False), False),
+        (lambda a, m: _late_cancel(a, m, processed=True), True),
+        (lambda a, m: _no_show(a, m, processed=False), False),
+        (lambda a, m: _no_show(a, m, processed=True), True),
+        (lambda a, m: _cancel(_booked(a, m)), False),
+        (lambda a, m: _kept_cancel(a, m), True),
+        (lambda a, m: _paid_trip(a, m), True),
+        (lambda a, m: _finish(_booked(a, m), processed=False), False),
     ],
     ids=[
         "late-cancel",
@@ -297,16 +299,32 @@ def test_no_receipt_for_nothing(account, make_trip):
         "completed",
     ],
 )
-def test_list_and_download_agree(account, client_as, make_trip, build):
+def test_list_and_download_agree(account, client_as, make_trip, build, has_one):
+    """The Trips row offers the PDF exactly when the download serves it, and each case
+    gives what the spec says: a plain cancellation that kept money downloads a receipt for
+    it; one that kept nothing, or a trip still to be processed, has none."""
     trip = build(account, make_trip)
     client = client_as(account)
 
     page = client.get("/account/trips/", {"tab": "all"})
     row = next(r for g in page.context["groups"] for r in g["rows"] if r["pk"] == trip.pk)
-    status = client.get(_url(trip)).status_code
+    response = client.get(_url(trip))
 
-    assert status == (200 if row["has_receipt"] else 404)
-    assert row["has_receipt"] is receipts.has_receipt(_scoped(account, trip))
+    assert row["has_receipt"] is has_one
+    assert response.status_code == (200 if has_one else 404)
+    assert receipts.has_receipt(_scoped(account, trip)) is has_one
+    if has_one:
+        assert response["Content-Type"] == "application/pdf"
+        assert response.content[:5] == b"%PDF-"
+
+
+def test_a_plain_cancellation_that_kept_money_downloads_its_receipt(account, client_as, make_trip):
+    trip = _kept_cancel(account, make_trip)
+
+    text = _text(client_as(account).get(_url(trip)).content)
+
+    assert "Cancellation charge" in text and "$92.50" in text
+    assert "Balance due" in text and "$0.00" in text
 
 
 def test_multi_trip_order_shows_this_trips_share_only(account, make_trip):
@@ -427,6 +445,7 @@ def test_receipt_context_carries_the_trip(account, make_trip, settings):
     settings.COMPANY_NAME = "All Pro Charter"
     settings.COMPANY_PHONE = "(703) 555-0142"
     settings.COMPANY_EMAIL = "billing@allprocharter.com"
+    settings.COMPANY_ADDRESS = settings.COMPANY_WEBSITE = settings.COMPANY_BILLING_EMAIL = ""
     company = CompanyFactory(name="Meridian Advisory Group")
     billing = ContactFactory(name="Dana Whitfield", company=company, email="dana@example.com")
     trip = make_trip(
@@ -483,6 +502,8 @@ def test_receipt_context_carries_the_trip(account, make_trip, settings):
         "address": "",
         "phone": "(703) 555-0142",
         "email": "billing@allprocharter.com",
+        "website": "",
+        "billing_email": "",
     }
     text = _text(receipts.render_pdf(ctx))
     for words in ("Trip receipt", trip.reference, "Halvorsen engagement", "Gratuity (20%)"):
@@ -572,6 +593,400 @@ def test_reference_with_non_latin_characters_does_not_crash(account, make_trip):
     text = _text(data)
     assert "Café – Zoë ??" in text
     assert "Zoë ?" in text
+
+
+@pytest.mark.parametrize(
+    ("typed", "printed"),
+    [
+        ("Rene\u0301e Zoe\u0308", "Renée Zoë"),  # decomposed accents compose
+        ("Dvořák Łukasz Đorđe", "Dvorák Lukasz Dorde"),  # no glyph: the plain letter
+        ("Nguyễn Thị", "Nguyên Thi"),  # the nearest letter the font has
+        ("Ελένη Παπαδοπούλου", "Eleni Papadopoulou"),
+        ("Сергей Щукин", "Sergey Shchukin"),
+        ("Ｆｕｌｌ ﬁt № 5", "Full fit No 5"),
+        ("PO\u20114471\u2009\u2212\u2009A", "PO-4471 - A"),
+        ("Tab\there\r\nnext\x00\x07\x1b[0m", "Tab here next[0m"),
+        ("zero\u200bwidth\u200e", "zerowidth"),
+        ("x\u0301 stray mark", "x stray mark"),
+        ("“Quoted” — €5 ™", "“Quoted” — €5 ™"),  # Windows-1252 has these: untouched
+        ("東京 😀", "?? ?"),
+    ],
+)
+def test_pdf_text_prints_what_the_font_can_and_the_nearest_thing_otherwise(typed, printed):
+    out = receipts.pdf_text(typed)
+
+    assert out == printed
+    out.encode(receipts.ENCODING)  # never raises
+
+
+def test_every_character_pdf_text_lets_through_has_a_glyph():
+    """The core fonts must be able to draw all of Windows-1252, or `pdf_text` lies."""
+    chars = "".join(
+        bytes([code]).decode(receipts.ENCODING)
+        for code in range(0x20, 0x100)
+        if code not in (0x7F, 0x81, 0x8D, 0x8F, 0x90, 0x9D, 0xAD)
+    )
+    assert receipts.pdf_text(chars) == chars
+
+    pdf = receipts._Receipt("APC-1")
+    for family in ("Helvetica", "Times"):
+        for bold in (False, True):
+            pdf.style(10, bold=bold, family=family)
+            assert all(pdf.get_string_width(char) > 0 for char in chars)
+    pdf.para(chars, pdf.width, 10)
+    assert bytes(pdf.output())[:5] == b"%PDF-"
+
+
+def test_a_decomposed_name_prints_composed_on_the_receipt(account, make_trip):
+    trip = _paid_trip(account, make_trip, customer_reference="Cafe\u0301 Rene\u0301e")
+    PassengerFactory(reservation=trip, name="Zoe\u0308 Dvořák\x00", is_lead=True)
+
+    text = _text(receipts.render_pdf(receipts.receipt_context(_scoped(account, trip))))
+
+    assert "Café Renée" in text
+    assert "Zoë Dvorák" in text
+    assert "?" not in text.split("Zoë Dvorák")[0][-40:]
+
+
+# --- which card (deferred 58, 59) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("brand", "shown"),
+    [
+        ("visa", "Visa ending 4242"),
+        ("mastercard", "Mastercard ending 4242"),
+        ("amex", "American Express ending 4242"),
+        ("diners", "Diners Club ending 4242"),
+        ("discover", "Discover ending 4242"),
+        ("jcb", "JCB ending 4242"),
+        ("unionpay", "UnionPay ending 4242"),
+        ("eftpos_au", "Eftpos Australia ending 4242"),
+        ("cartes_bancaires", "Cartes Bancaires ending 4242"),
+        ("American Express", "American Express ending 4242"),  # a payment method's own name
+        ("unknown", "Card ending 4242"),
+        ("", "Card ending 4242"),
+        ("some_new_brand", "Some New Brand ending 4242"),
+    ],
+)
+def test_card_text_names_the_brand_as_the_customer_knows_it(brand, shown):
+    assert receipts.card_text(brand, "4242") == shown
+    assert receipts.card_text(brand, "") == ""
+
+
+def test_a_charge_with_no_card_on_record_never_borrows_the_card_on_file(account, make_trip):
+    """A charge from before cards were kept per charge: the order's card on file is the
+    card the next charge would use, not proof of what paid this one."""
+    trip = _booked(account, make_trip)
+    _pay(trip, trip.line_total, at=PROCESSED, card_brand="", card_last4="")
+    _pay(
+        trip,
+        "10.00",
+        kind=Charge.Kind.REFUND,
+        reservation=trip,
+        at=PROCESSED,
+        refund_method=Charge.RefundMethod.CARD,
+        card_brand="",
+        card_last4="",
+    )
+    PaymentPlan.objects.filter(lead_id=trip.lead_id).update(card_brand="amex", card_last4="0005")
+    TripExtraFactory(reservation=trip, label="Goodwill", amount=10, kind="credit")
+    trip.refresh_extras_total()
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert [method for _, method, _ in ctx["payments"]] == ["Card payment", "Refund to card"]
+    text = _text(receipts.render_pdf(ctx))
+    assert "0005" not in text and "American Express" not in text
+
+
+def test_prepaid_money_from_two_cards_names_neither_on_a_shared_order(account, make_trip):
+    """The deposit and the balance of a two-trip order were paid by different cards: a
+    trip's share of that pool cannot be pinned on either."""
+    first = _booked(account, make_trip)
+    second = ReservationFactory(
+        lead=first.lead, rate=300, pickup_date=date(2026, 11, 20), pickup_timezone=NY
+    )
+    second.booked_total = second.line_total
+    second.save(update_fields=["booked_total"])
+    _pay(first, "100.00", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _pay(
+        first,
+        first.line_total + second.line_total - Decimal("100.00"),
+        kind=Charge.Kind.BALANCE,
+        at=datetime(2026, 10, 29, 15, 0, tzinfo=UTC),
+        card_brand="mastercard",
+        card_last4="5555",
+    )
+    _finish(first)
+
+    ctx = receipts.receipt_context(_scoped(account, first))
+
+    assert ctx["payments"] == [("Oct 28, 2026", "Card payment", first.line_total)]
+
+
+def test_an_order_of_one_trip_lists_each_payment_as_it_was_charged(account, make_trip):
+    """The deposit and the balance are this trip's alone: each prints with its own date,
+    card and amount, as the card statement shows them."""
+    trip = _booked(account, make_trip)
+    _pay(trip, "100.00", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _pay(
+        trip,
+        trip.line_total - Decimal("100.00"),
+        kind=Charge.Kind.BALANCE,
+        at=datetime(2026, 11, 2, 15, 0, tzinfo=UTC),
+        card_brand="amex",
+        card_last4="0005",
+    )
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"] == [
+        ("Oct 28, 2026", "Visa ending 4242", Decimal("100.00")),
+        ("Nov 2, 2026", "American Express ending 0005", trip.line_total - Decimal("100.00")),
+    ]
+    assert ctx["balance_due"] == Decimal("0.00")
+
+
+def test_a_payment_with_no_capture_time_is_dated_when_it_was_posted(account, make_trip):
+    """A deposit paid outright has no capture time; the row was opened days before it was
+    paid. The ledger entry is when the money moved."""
+    trip = _booked(account, make_trip)
+    deposit = _pay(trip, trip.line_total, at=None)
+    Charge.objects.filter(pk=deposit.pk).update(
+        created_at=datetime(2026, 10, 20, 15, 0, tzinfo=UTC)
+    )
+    entry = JournalEntry.objects.create(
+        lead=trip.lead,
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        charge=deposit,
+        idempotency_key=f"capture-charge{deposit.pk}",
+    )
+    JournalEntry.objects.filter(pk=entry.pk).update(
+        posted_at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC)
+    )
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"] == [("Oct 28, 2026", "Visa ending 4242", trip.line_total)]
+
+
+# --- refunds and holds (deferred 60) -------------------------------------------------------
+
+
+def _credit(trip: Reservation, amount) -> None:
+    TripExtraFactory(reservation=trip, label="Refund", amount=amount, kind="credit")
+    trip.refresh_extras_total()
+
+
+def _balanced(ctx: dict) -> None:
+    """The receipt adds up: its lines to its total, its payments and balance to it too."""
+    if ctx["lines"]:
+        assert sum(amount for _, amount in ctx["lines"]) == ctx["total"]
+    if ctx["balance_due"] is not None:
+        assert sum(a for _, _, a in ctx["payments"]) + ctx["balance_due"] == ctx["total"]
+
+
+def test_a_refund_split_over_two_charges_on_one_card_is_one_row(account, make_trip):
+    """`refund` pays a trip refund back across several Stripe charges: the extra rows point
+    at the first (`receipt_parent`) and the customer reads one refund."""
+    trip = _booked(account, make_trip)
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _credit(trip, 50)
+    when = datetime(2026, 11, 19, 16, 0, tzinfo=UTC)
+    refund = {"kind": Charge.Kind.REFUND, "reservation": trip, "at": None}
+    head = _pay(trip, "30.00", receipt_due_at=when, **refund)
+    _pay(trip, "20.00", receipt_parent=head, **refund)
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"] == [
+        ("Oct 28, 2026", "Visa ending 4242", trip.line_total + Decimal("50.00")),
+        ("Nov 19, 2026", "Refund to Visa ending 4242", Decimal("-50.00")),
+    ]
+    _balanced(ctx)
+    assert ctx["balance_due"] == Decimal("0.00")
+
+
+def test_a_refund_split_over_two_cards_names_each_card_for_its_own_part(account, make_trip):
+    trip = _booked(account, make_trip)
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _credit(trip, 50)
+    when = datetime(2026, 11, 19, 16, 0, tzinfo=UTC)
+    refund = {"kind": Charge.Kind.REFUND, "reservation": trip, "at": None}
+    head = _pay(trip, "30.00", receipt_due_at=when, **refund)
+    _pay(trip, "20.00", receipt_parent=head, card_brand="amex", card_last4="0005", **refund)
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"][1:] == [
+        ("Nov 19, 2026", "Refund to Visa ending 4242", Decimal("-30.00")),
+        ("Nov 19, 2026", "Refund to American Express ending 0005", Decimal("-20.00")),
+    ]
+    _balanced(ctx)
+
+
+def test_a_refund_part_whose_head_is_another_trips_stands_alone(account, make_trip):
+    """Only this trip's rows are read: a part pointing at a row that is not among them is
+    its own row, and the other trip's refund never reaches this receipt."""
+    trip = _booked(account, make_trip)
+    other = ReservationFactory(lead=trip.lead, rate=90, pickup_date=date(2026, 11, 25))
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _credit(trip, 20)
+    when = datetime(2026, 11, 19, 16, 0, tzinfo=UTC)
+    head = _pay(other, "75.00", kind=Charge.Kind.REFUND, reservation=other, at=when)
+    _pay(trip, "20.00", kind=Charge.Kind.REFUND, reservation=trip, at=when, receipt_parent=head)
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"][1:] == [
+        ("Nov 19, 2026", "Refund to Visa ending 4242", Decimal("-20.00"))
+    ]
+    assert Decimal("-75.00") not in [a for _, _, a in ctx["payments"]]
+    _balanced(ctx)
+
+
+def test_a_captured_cleaning_hold_is_a_payment_on_its_trip(account, make_trip):
+    """APC-95: a hold captured for the trip's cleaning fee is the trip's own money; one
+    still on the card (authorized) or let go is not money at all."""
+    trip = _booked(account, make_trip)
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    TripExtraFactory(reservation=trip, label="Cleaning fee", amount=250)
+    trip.refresh_extras_total()
+    when = datetime(2026, 11, 19, 16, 0, tzinfo=UTC)
+    _pay(trip, "250.00", kind=Charge.Kind.HOLD, reservation=trip, at=when)
+    plan = PaymentPlan.objects.get(lead_id=trip.lead_id)
+    for status in (Charge.Status.AUTHORIZED, Charge.Status.RELEASED, Charge.Status.EXPIRED):
+        ChargeFactory(plan=plan, kind=Charge.Kind.HOLD, status=status, amount=500, reservation=trip)
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ("Cleaning fee", Decimal("250.00")) in ctx["lines"]
+    assert ctx["payments"] == [
+        ("Oct 28, 2026", "Visa ending 4242", trip.line_total - Decimal("250.00")),
+        ("Nov 19, 2026", "Visa ending 4242", Decimal("250.00")),
+    ]
+    assert ctx["balance_due"] == Decimal("0.00")
+    _balanced(ctx)
+
+
+# --- on account, with card money too (deferred 61) -----------------------------------------
+
+
+def test_an_on_account_trip_shows_its_card_payments_and_bills_the_rest(account, make_trip):
+    """An order moved to an account after its deposit was paid by card, with a trip charge
+    since: the card rows print, and the account is billed what they leave."""
+    trip = _booked(account, make_trip)
+    _pay(trip, "92.50", at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    _pay(
+        trip,
+        "20.00",
+        kind=Charge.Kind.TRIP,
+        reservation=trip,
+        at=datetime(2026, 11, 19, 16, 0, tzinfo=UTC),
+    )
+    lead = trip.lead
+    lead.billing_group = AccountGroupFactory()
+    lead.save(update_fields=["billing_group"])
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"] == [
+        ("Oct 28, 2026", "Visa ending 4242", Decimal("92.50")),
+        ("Nov 19, 2026", "Visa ending 4242", Decimal("20.00")),
+        ("", "Billed to your account", trip.line_total - Decimal("112.50")),
+    ]
+    assert sum(a for _, _, a in ctx["payments"]) == ctx["total"]
+    assert ctx["balance_due"] is None
+    text = _text(receipts.render_pdf(ctx))
+    assert "Visa ending 4242" in text and "Billed to your account" in text
+    assert "Balance due" not in text
+
+
+def test_an_on_account_trip_paid_in_full_by_card_bills_nothing_to_the_account(account, make_trip):
+    trip = _booked(account, make_trip)
+    _pay(trip, trip.line_total, at=datetime(2026, 10, 28, 15, 0, tzinfo=UTC))
+    lead = trip.lead
+    lead.billing_group = AccountGroupFactory()
+    lead.save(update_fields=["billing_group"])
+    _finish(trip)
+
+    ctx = receipts.receipt_context(_scoped(account, trip))
+
+    assert ctx["payments"] == [("Oct 28, 2026", "Visa ending 4242", trip.line_total)]
+    assert ctx["balance_due"] is None
+    assert "Billed to your account" not in _text(receipts.render_pdf(ctx))
+
+
+# --- the company block ---------------------------------------------------------------------
+
+
+def test_company_details_print_when_the_settings_hold_them(account, make_trip, settings):
+    settings.COMPANY_NAME = "All Pro Charter"
+    settings.COMPANY_PHONE = "(703) 555-0142"
+    settings.COMPANY_EMAIL = "reservations@example.test"
+    settings.COMPANY_ADDRESS = "1 Charter Way, Suite 200, Ashburn, VA 20147"
+    settings.COMPANY_WEBSITE = "www.example.test"
+    settings.COMPANY_BILLING_EMAIL = "billing@example.test"
+    trip = _scoped(account, _paid_trip(account, make_trip))
+
+    ctx = receipts.receipt_context(trip)
+    data = receipts.render_pdf(ctx)
+
+    assert ctx["company"] == {
+        "name": "All Pro Charter",
+        "address": "1 Charter Way, Suite 200, Ashburn, VA 20147",
+        "phone": "(703) 555-0142",
+        "email": "reservations@example.test",
+        "website": "www.example.test",
+        "billing_email": "billing@example.test",
+    }
+    shown = _text(data)
+    for words in ("Suite 200", "(703) 555-0142", "reservations@example.test", "www.example.test"):
+        assert words in shown
+    assert "Questions about this receipt: billing@example.test" in shown
+    assert _pages(data) == 1
+
+
+def test_blank_company_details_leave_no_gap_or_placeholder(account, make_trip, settings):
+    settings.COMPANY_EMAIL = "reservations@example.test"
+    settings.COMPANY_ADDRESS = settings.COMPANY_WEBSITE = settings.COMPANY_BILLING_EMAIL = ""
+    trip = _scoped(account, _paid_trip(account, make_trip))
+
+    shown = " ".join(
+        text for _, text in _placed(receipts.render_pdf(receipts.receipt_context(trip)))
+    )
+
+    assert "Questions about this receipt: reservations@example.test" in shown
+    assert " ·  · " not in shown and "None" not in shown
+
+
+# --- the receipt adds up -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda a, m: _paid_trip(a, m, gratuity_pct=20),
+        lambda a, m: _kept_cancel(a, m),
+        lambda a, m: _late_cancel(a, m, processed=True, settled=Decimal("120.00")),
+        lambda a, m: _no_show(a, m, processed=True),
+    ],
+    ids=["completed", "cancelled-money-kept", "late-cancel-processed", "no-show-processed"],
+)
+def test_the_receipt_adds_up(account, make_trip, build):
+    ctx = receipts.receipt_context(_scoped(account, build(account, make_trip)))
+
+    assert ctx["balance_due"] is not None
+    _balanced(ctx)
 
 
 # --- the download and where it is offered ------------------------------------------------

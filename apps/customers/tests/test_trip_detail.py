@@ -1,10 +1,17 @@
 """Trip detail, `/account/trips/<pk>/`: where one trip stands, its itinerary and its money."""
 
+import html
+import re
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
+from django.conf import settings
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import resolve, reverse
 from django.utils import timezone
 
@@ -19,7 +26,7 @@ from apps.leads import services as lead_services
 from apps.leads.factories import LeadFactory, ServiceTypeFactory, VehicleTypeFactory
 from apps.leads.models import Lead
 from apps.payments.factories import ChargeFactory, PaymentPlanFactory
-from apps.payments.models import Charge, PaymentPlan
+from apps.payments.models import Charge, JournalEntry, PaymentPlan
 from apps.public.services import WEDDING_SERVICE_NAME
 from apps.reservations.factories import (
     FlightFactory,
@@ -28,7 +35,13 @@ from apps.reservations.factories import (
     StopFactory,
     TripExtraFactory,
 )
-from apps.reservations.models import FlightDirection, Reservation, TripIssue, TripReview
+from apps.reservations.models import (
+    FlightDirection,
+    Reservation,
+    TripIssue,
+    TripReview,
+    TripStatusEvent,
+)
 from apps.reservations.services import set_trip_status
 
 pytestmark = pytest.mark.django_db
@@ -47,9 +60,10 @@ def _day(days: int):
 
 
 def _body(client, trip: Reservation) -> str:
+    """The page as text, entities read back ("We're", not "We&#x27;re")."""
     response = client.get(_url(trip))
     assert response.status_code == 200
-    return response.content.decode()
+    return html.unescape(response.content.decode())
 
 
 def _detail(account, trip: Reservation) -> dict:
@@ -135,7 +149,7 @@ def test_driver_hidden_until_dispatched_and_affiliate_never_shown(account, clien
     body = _body(client, trip)
     assert _detail(account, trip)["driver"] is None
     assert "Sam Ortiz" not in body and "Blue Line" not in body
-    assert "Your driver&#x27;s name and cell appear here once assigned." in body
+    assert "Your driver's name and cell appear here once assigned." in body
 
     set_trip_status(trip, S.DISPATCHED)
     body = _body(client, trip)
@@ -583,7 +597,7 @@ def test_itinerary_names_the_airport_and_meets_the_flight(account, client_as, ma
     zone = trip.pickup_tz_label
     assert stops[0]["title"] == "Reagan National Airport (DCA)"
     assert stops[0]["detail"] == (
-        f"Pickup 9:10 AM {zone}. American Airlines 2114, arriving 8:52 AM."
+        f"Pickup 9:10 AM {zone}. American Airlines 2114, arriving 8:52 AM {zone}."
     )
     assert stops[1]["title"] == "1100 Pennsylvania Ave NW, Washington, DC"
     assert stops[1]["detail"] == "Drop-off"
@@ -620,27 +634,6 @@ def test_your_reference_is_editable_and_saves_through_the_reference_endpoint(
     assert trip.customer_reference == "Q4 offsite"
 
 
-def test_trip_detail_query_count(account, client_as, make_trip, django_assert_max_num_queries):
-    trip = _booked(account, make_trip, pickup_timezone=LA)
-    _paid(trip, Decimal("100.00"))
-    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED, driver_name="Sam Ortiz")
-    set_trip_status(trip, S.DISPATCHED)
-    TripExtraFactory(reservation=trip, label="Airport fee", amount=10)
-    trip.refresh_extras_total()
-    for i in range(4):
-        StopFactory(reservation=trip, sequence=5 + i, note=f"Stop {i}")
-        PassengerFactory(reservation=trip, name=f"Rider {i}")
-    client = client_as(account)
-
-    # Measured 28: the session and account (3), the trip with its stops and passengers (3),
-    # the order's trips (1), the money split (4), the stops again with flights (1), the
-    # extras (1), the driver (1), the status history and deposit (2), and the pay page's
-    # ledger reads for a booked order (12). None of it grows with stops or passengers.
-    with django_assert_max_num_queries(30):
-        response = client.get(_url(trip))
-    assert response.status_code == 200
-
-
 def test_expected_flight_at_trusts_only_a_flight_still_expected():
     from apps.customers.selectors import expected_flight_at
     from apps.reservations.models import Flight
@@ -654,3 +647,444 @@ def test_expected_flight_at_trusts_only_a_flight_still_expected():
     assert expected_flight_at(active) == estimated
     assert expected_flight_at(cancelled) is None
     assert expected_flight_at(None) is None
+
+
+# --- flight times and open dates (deferred 24) ---------------------------------------------
+
+
+def test_a_flight_time_always_carries_its_own_zone(account, make_trip):
+    """The airport's zone, named even when it is the trip's: a time never stands bare."""
+    airline = AirlineFactory(iata="UA", name="United Airlines")
+    ohare = AirportFactory(name="O'Hare International Airport", iata="ORD")
+    ohare.timezone = "America/Chicago"
+    ohare.save(update_fields=["timezone"])
+    day = _day(30)
+    trip = make_trip(
+        account, stops=[], pickup_date=day, pickup_time=time(9, 10), pickup_timezone=LA
+    )
+    flight = FlightFactory(
+        airline=airline,
+        flight_number="88",
+        flight_date=day,
+        airport=ohare,
+        direction=FlightDirection.DEPARTURE,
+        scheduled_at=datetime.combine(day, time(20, 5), tzinfo=UTC),
+    )
+    StopFactory(reservation=trip, sequence=0, address="1 Main St, Pasadena, CA 91101")
+    StopFactory(
+        reservation=trip,
+        sequence=1,
+        airport=ohare,
+        airline=airline,
+        flight_number="88",
+        flight_direction=FlightDirection.DEPARTURE,
+        flight=flight,
+    )
+
+    detail = _detail(account, trip)["stops"][1]["detail"]
+
+    zone = flight.scheduled_at.astimezone(ZoneInfo("America/Chicago"))
+    assert zone.tzname() in ("CST", "CDT")
+    assert detail == f"Drop-off. United Airlines 88, departing {zone:%-I:%M %p} {zone.tzname()}."
+
+
+def test_a_middle_stops_time_carries_the_zone_while_the_pickup_time_is_open(account, make_trip):
+    trip = make_trip(account, stops=[], pickup_date=_day(30), pickup_time=None, pickup_timezone=LA)
+    StopFactory(reservation=trip, sequence=0, address="1 Main St, Pasadena, CA 91101")
+    StopFactory(reservation=trip, sequence=1, name="Griffith Observatory", scheduled_time=time(14))
+    StopFactory(reservation=trip, sequence=2, address="9 Elm St, Burbank, CA 91501")
+
+    stops = _detail(account, trip)["stops"]
+
+    assert stops[0]["detail"] == "Pickup"
+    assert stops[1]["detail"] == f"Stop 2:00 PM {trip.pickup_tz_label}."
+
+
+def test_list_rows_put_no_zone_after_a_time_still_open(account, client_as, make_trip):
+    """ "Time to be confirmed EST" names a zone for no time."""
+    trip = make_trip(account, lead__status=Lead.Status.BOOKED, pickup_date=_day(9))
+    make_trip(account, lead__status=Lead.Status.BOOKED)  # no date either
+    PaymentPlanFactory(lead=trip.lead, deposit_status=PaymentPlan.DepositStatus.PAID)
+    client = client_as(account)
+
+    for url in (reverse("customers:trips") + "?tab=all", reverse("customers:home")):
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", client.get(url).content.decode()))
+        assert "Time to be confirmed" in text
+        assert not re.search(r"Time to be confirmed [A-Z]{2,4}\b", text), url
+        assert "Date to be confirmed · Time to be confirmed" not in text
+        assert "Date and time to be confirmed" in text
+
+
+# --- Pay now follows the trip (deferred 50) ------------------------------------------------
+
+
+def _order_of_two(account) -> tuple[Reservation, Reservation]:
+    lead = LeadFactory(contact=account.contact, status=Lead.Status.QUOTED)
+    first = ReservationFactory(lead=lead, rate=185, pickup_date=_day(10), pickup_time=time(9))
+    second = ReservationFactory(lead=lead, rate=185, pickup_date=_day(20), pickup_time=time(9))
+    lead_services.book_lead(lead)
+    first.refresh_from_db()
+    second.refresh_from_db()
+    return first, second
+
+
+def test_order_money_is_asked_on_the_trips_it_is_still_owed_for(account, make_trip):
+    """One order, two trips, $185 paid: by the pickup-order split the first is paid in full
+    and the second has nothing, so the order's unpaid money is asked on the second only."""
+    first, second = _order_of_two(account)
+    _paid(first, Decimal("185.00"))
+
+    assert _detail(account, first)["paid_line"] == "Paid in full"
+    assert _detail(account, first)["pay_url"] is None
+    assert _pay_target(_detail(account, second)["pay_url"]) == ("quote_pay", second.lead_id)
+
+
+def test_a_cancelled_trip_never_asks_for_its_siblings_money(account, make_trip):
+    first, second = _order_of_two(account)
+    first.cancelled_at = timezone.now()
+    first.save(update_fields=["cancelled_at"])
+    set_trip_status(first, S.CANCELLED)
+
+    assert _detail(account, first)["pay_url"] is None
+    assert _detail(account, second)["pay_url"] is not None
+
+
+def test_a_trip_pay_link_shows_on_its_own_trip_only(account, make_trip):
+    """A pay link sent for one trip is what the pay page charges: only that trip's page
+    leads to it, whatever else the order owes."""
+    first, second = _order_of_two(account)
+    plan = PaymentPlan.objects.get(lead_id=first.lead_id)
+    ChargeFactory(
+        plan=plan,
+        kind=Charge.Kind.TRIP,
+        status=Charge.Status.PENDING,
+        reservation=second,
+        amount=second.line_total,
+        stripe_client_secret="pi_secret",
+    )
+
+    assert _detail(account, first)["pay_url"] is None
+    detail = _detail(account, second)
+    assert _pay_target(detail["pay_url"]) == ("quote_pay", second.lead_id)
+    assert detail["pay_label"] == "Pay now"
+
+
+# --- one phrase for the deposit (deferred 51) ----------------------------------------------
+
+
+def _confirming(account, make_trip, *, held: bool = True) -> Reservation:
+    trip = make_trip(
+        account,
+        lead__status=Lead.Status.ENGAGED,
+        lead__quote_sent_at=_at("2026-11-11", "06:00"),
+        pickup_date=_day(30),
+        pickup_time=time(9, 10),
+        pickup_timezone=LA,
+    )
+    if held:
+        ChargeFactory(
+            plan=PaymentPlanFactory(lead=trip.lead),
+            kind=Charge.Kind.DEPOSIT,
+            status=Charge.Status.AUTHORIZED,
+            authorized_at=_at("2026-11-13", "07:00"),  # Nov 12 in LA
+        )
+    return trip
+
+
+def test_a_confirming_trip_stands_at_deposit_paid_and_says_so(account, client_as, make_trip):
+    trip = _confirming(account, make_trip)
+
+    detail = _detail(account, trip)
+
+    assert selectors_key(trip) == "confirming"
+    assert [(name, state) for name, _, state in _steps(detail)] == [
+        ("Requested", "done"),
+        ("Quote sent", "done"),
+        ("Deposit paid", "now"),
+        ("Confirmed", "todo"),
+        ("Driver assigned", "todo"),
+        ("Completed", "todo"),
+    ]
+    assert _steps(detail)[2][1] == "Nov 12"
+    assert (detail["paid_line"], detail["paid_tone"]) == ("Deposit paid", "gold")
+    assert detail["pay_url"] is None
+    body = _body(client_as(account), trip)
+    assert body.count("Deposit paid") == 2  # the step and the charges card
+    assert "Deposit received" not in body
+
+
+def test_a_confirming_trip_with_no_hold_on_record_claims_no_deposit(account, make_trip):
+    trip = _confirming(account, make_trip, held=False)
+
+    detail = _detail(account, trip)
+
+    assert ("Deposit paid", "", "now") in _steps(detail)
+    assert detail["paid_line"] == ""
+
+
+def selectors_key(trip: Reservation) -> str:
+    from apps.customers.selectors import label_key
+
+    return label_key(trip)
+
+
+# --- the charges card with no figure (deferred 52) -----------------------------------------
+
+
+def _unpriced(account, make_trip, status: str, **kw) -> Reservation:
+    return make_trip(account, lead__status=status, rate=0, pickup_date=_day(30), **kw)
+
+
+def test_only_a_request_is_told_its_quote_is_being_prepared(account, client_as, make_trip):
+    request = _unpriced(account, make_trip, Lead.Status.NEW)
+    booked = _unpriced(account, make_trip, Lead.Status.BOOKED, trip_status=S.UNASSIGNED)
+    billed = _unpriced(
+        account,
+        make_trip,
+        Lead.Status.BOOKED,
+        trip_status=S.UNASSIGNED,
+        lead__billing_group=AccountGroupFactory(),
+    )
+    done = _unpriced(account, make_trip, Lead.Status.BOOKED, trip_status=S.DONE)
+    closed = _unpriced(account, make_trip, Lead.Status.NEW)
+    lead_services.mark_lost(closed.lead, "")
+
+    notes = {
+        name: _detail(account, trip)["charges_note"]
+        for name, trip in (
+            ("request", request),
+            ("booked", booked),
+            ("billed", billed),
+            ("done", done),
+            ("closed", closed),
+        )
+    }
+
+    assert notes == {
+        "request": "We're preparing your quote.",
+        "booked": "We're confirming the price for this trip. It will show here once it's set.",
+        "billed": "This trip is billed to your account. Its price will show here once it's set.",
+        "done": "No charges to show for this trip.",
+        "closed": "This request was closed before it was priced.",
+    }
+    body = _body(client_as(account), booked)
+    assert "preparing your quote" not in body
+    assert "We're confirming the price for this trip." in body
+
+
+def test_a_priced_trip_has_no_charges_note(account, make_trip):
+    assert _detail(account, _booked(account, make_trip))["charges_note"] == ""
+
+
+# --- template hygiene (deferred 55) --------------------------------------------------------
+
+_TEMPLATE = Path(settings.BASE_DIR) / "templates" / "customers" / "trip.html"
+
+
+def test_a_trip_with_no_passenger_count_never_reads_zero_passengers(account, client_as, make_trip):
+    trip = make_trip(account, passengers=0)
+
+    assert _detail(account, trip)["passengers_text"] == "To be confirmed"
+    assert "0 passengers" not in _body(client_as(account), trip)
+    one = make_trip(account, passengers=1)
+    assert _detail(account, one)["passengers_text"] == "1 passenger"
+
+
+def test_the_driver_line_waits_for_a_booked_trip(account, client_as, make_trip):
+    """A request or a quote has no driver coming yet: no "Driver" row at all."""
+    request = _unpriced(account, make_trip, Lead.Status.NEW)
+    quote = make_trip(
+        account,
+        lead__status=Lead.Status.QUOTED,
+        lead__quote_expires_at=timezone.now() + timedelta(days=10),
+    )
+
+    for trip in (request, quote):
+        assert _detail(account, trip)["driver_pending"] == ""
+        assert ">Driver<" not in _body(client_as(account), trip)
+    booked = _booked(account, make_trip)
+    assert _detail(account, booked)["driver_pending"]
+
+
+def test_a_dispatched_trip_with_no_driver_on_file_does_not_say_once_assigned(account, make_trip):
+    trip = _booked(account, make_trip)
+    set_trip_status(trip, S.DISPATCHED)
+
+    detail = _detail(account, trip)
+
+    assert detail["label"] == "Driver assigned" and detail["driver"] is None
+    assert detail["driver_pending"] == "Your driver's name and cell will appear here shortly."
+
+
+def test_every_description_list_groups_its_terms_one_way(account, client_as, make_trip):
+    """A `<dl>` holds `<dt>`/`<dd>` pairs or `<div>` groups of them, never both."""
+    trip = make_trip(account, lead__status=Lead.Status.QUOTED, rate=170, hours=1, gratuity_pct=20)
+
+    body = _body(client_as(account), trip)
+
+    lists = re.findall(r"<dl[^>]*>(.*?)</dl>", body, re.S)
+    assert len(lists) == 2
+    for inner in lists:
+        loose = re.sub(r"<div[^>]*>.*?</div>", "", inner, flags=re.S)
+        assert "<dt" not in loose and "<dd" not in loose, inner
+
+
+def test_no_empty_paragraphs(account, client_as, make_trip):
+    for trip in (make_trip(account), _booked(account, make_trip)):
+        body = _body(client_as(account), trip)
+        page = body[body.index("<h1") : body.index("Prints on your receipt.")]
+        # The request dialogs' live region (`role="alert"`) is empty until it speaks.
+        assert not re.search(r'<p(?![^>]*role="alert")[^>]*>\s*</p>', page)
+
+
+def test_the_page_keeps_to_four_type_sizes():
+    """Small, body, section title, and the heading (22px, 28px from `sm` up)."""
+    sizes = set(re.findall(r"text-\[([\d.]+)px\]", _TEMPLATE.read_text()))
+
+    assert sizes == {"12.5", "13.5", "15", "22", "28"}
+
+
+# --- your reference (deferred 56) ----------------------------------------------------------
+
+
+def test_the_reference_field_saves_on_blur_so_a_failed_save_retries(account, client_as, make_trip):
+    """`change` fires only when the text differs from what it was at focus, so after a
+    failed save a second blur did nothing. Blur always asks; `save()` skips a saved value."""
+    body = _body(client_as(account), make_trip(account))
+
+    field = re.search(r'<input id="trip-reference"[^>]*>', body, re.S).group(0)
+    assert '@blur="save()"' in field
+    assert "@change" not in field
+
+
+# --- step dates (deferred 48, 49) ----------------------------------------------------------
+
+
+def test_confirmed_is_never_dated_after_driver_assigned(account, make_trip):
+    """An order with no booking event (its trip was created already booked): a later
+    release back to Unassigned by the system is not the day it was confirmed."""
+    trip = make_trip(
+        account,
+        lead__status=Lead.Status.BOOKED,
+        trip_status=S.UNASSIGNED,
+        pickup_date=_day(30),
+        pickup_time=time(9, 10),
+    )
+    with patch(NOW, return_value=_at("2026-12-02", "20:00")):
+        set_trip_status(trip, S.DISPATCHED)
+    with patch(NOW, return_value=_at("2026-12-05", "20:00")):
+        set_trip_status(trip, S.UNASSIGNED, source=TripStatusEvent.Source.SYSTEM)
+    with patch(NOW, return_value=_at("2026-12-06", "20:00")):
+        set_trip_status(trip, S.DISPATCHED)
+
+    steps = {name: (date, state) for name, date, state in _steps(_detail(account, trip))}
+
+    assert steps["Confirmed"] == ("", "done")
+    assert steps["Driver assigned"] == ("Dec 2", "now")
+
+
+def test_confirmed_falls_back_to_the_plan_when_the_event_is_a_later_release(account, make_trip):
+    trip = make_trip(
+        account,
+        lead__status=Lead.Status.BOOKED,
+        trip_status=S.UNASSIGNED,
+        pickup_date=_day(30),
+        pickup_time=time(9, 10),
+    )
+    plan = PaymentPlanFactory(lead=trip.lead)
+    PaymentPlan.objects.filter(pk=plan.pk).update(created_at=_at("2026-11-30", "20:00"))
+    with patch(NOW, return_value=_at("2026-12-02", "20:00")):
+        set_trip_status(trip, S.DISPATCHED)
+    with patch(NOW, return_value=_at("2026-12-05", "20:00")):
+        set_trip_status(trip, S.UNASSIGNED, source=TripStatusEvent.Source.SYSTEM)
+
+    steps = {name: date for name, date, _ in _steps(_detail(account, trip))}
+
+    assert steps["Confirmed"] == "Nov 30"
+
+
+def test_the_deposit_is_dated_when_its_money_was_booked_never_when_the_row_last_changed(
+    account, make_trip
+):
+    """A deposit paid outright has no hold or capture time. The ledger entry posted for it
+    is when it was paid; with none, the step stands undated rather than guessed."""
+    trip = _booked(account, make_trip, pickup_timezone=LA)
+    deposit = _paid(trip, Decimal("100.00"))
+    Charge.objects.filter(pk=deposit.pk).update(updated_at=_at("2026-12-20", "20:00"))
+
+    assert ("Deposit paid", "", "done") in _steps(_detail(account, trip))
+
+    entry = JournalEntry.objects.create(
+        lead=trip.lead,
+        kind=JournalEntry.Kind.DEPOSIT_CAPTURED,
+        charge=deposit,
+        idempotency_key=f"capture-charge{deposit.pk}",
+    )
+    JournalEntry.objects.filter(pk=entry.pk).update(posted_at=_at("2026-11-13", "07:00"))
+
+    assert ("Deposit paid", "Nov 12", "done") in _steps(_detail(account, trip))
+
+
+# --- queries (deferred 145) ----------------------------------------------------------------
+
+
+def _busy_trip(account, make_trip, stops: int) -> Reservation:
+    """A dispatched trip with a driver, an extra, a paid deposit and `stops` stops, each
+    with a note and a named passenger."""
+    trip = _booked(account, make_trip, pickup_timezone=LA, stops=[])
+    _paid(trip, Decimal("100.00"))
+    AssignmentFactory(reservation=trip, status=Assignment.Status.CONFIRMED, driver_name="Sam Ortiz")
+    set_trip_status(trip, S.DISPATCHED)
+    TripExtraFactory(reservation=trip, label="Airport fee", amount=10)
+    trip.refresh_extras_total()
+    for i in range(stops):
+        StopFactory(reservation=trip, sequence=i, note=f"Stop {i}", address=f"{i} Main St")
+        PassengerFactory(reservation=trip, name=f"Rider {i}")
+    return trip
+
+
+def _queries(client, trip: Reservation) -> list[str]:
+    with CaptureQueriesContext(connection) as captured:
+        assert client.get(_url(trip)).status_code == 200
+    return [q["sql"] for q in captured.captured_queries]
+
+
+def test_the_page_costs_the_same_whatever_the_trip_holds(account, client_as, make_trip):
+    small = _busy_trip(account, make_trip, stops=2)
+    large = _busy_trip(account, make_trip, stops=12)
+    client = client_as(account)
+
+    few, many = _queries(client, small), _queries(client, large)
+
+    assert len(few) == len(many)
+    # Measured 29: the session and account (3), the trip with its stops and passengers (3),
+    # the order's trips (1), the money split (4), the driver (1), the deposit and when it
+    # was posted (2), the status history (1), the pay page's ledger reads for a booked
+    # order (12), the extras (1) and the open requests (1).
+    assert len(many) <= 30
+    # The stops come with the trip (`visible_trips`' prefetch) and are never read again.
+    stop_reads = [sql for sql in many if re.search(r"FROM .reservations_stop.", sql)]
+    assert len(stop_reads) == 1
+
+
+def test_flights_cost_the_same_for_one_stop_or_many(account, client_as, make_trip):
+    airline = AirlineFactory(iata="AA", name="American Airlines")
+
+    def with_flights(n: int) -> Reservation:
+        trip = _busy_trip(account, make_trip, stops=0)
+        for i in range(n):
+            airport = AirportFactory()
+            flight = FlightFactory(airline=airline, flight_number=str(100 + i), airport=airport)
+            StopFactory(
+                reservation=trip,
+                sequence=i,
+                airport=airport,
+                airline=airline,
+                flight_number=str(100 + i),
+                flight=flight,
+            )
+        return trip
+
+    client = client_as(account)
+
+    assert len(_queries(client, with_flights(1))) == len(_queries(client, with_flights(6)))

@@ -16,11 +16,13 @@ per-charge receipts (`apps/payments/receipts.py`) are a separate thing and stay 
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.db.models import Min
 from django.utils import timezone
 from fpdf import FPDF
 from fpdf.enums import Align, XPos, YPos
@@ -28,7 +30,7 @@ from fpdf.enums import Align, XPos, YPos
 from apps.dispatch.selectors import CANCELLED_STATUSES
 from apps.leads.models import Lead
 from apps.payments import trip_money
-from apps.payments.models import Charge, PaymentPlan
+from apps.payments.models import Charge, JournalEntry, PaymentPlan
 from apps.payments.services import TRIP_MONEY_KINDS
 from apps.planners.selectors import dispatch_phone
 from apps.public.wedding import format_clock
@@ -136,11 +138,48 @@ def passenger_names(trip: Reservation) -> list[str]:
     return [p.name.strip() for p in named]
 
 
+# Stripe's `card.brand` values, as the customer knows the card.
+_CARD_BRANDS = {
+    "amex": "American Express",
+    "american express": "American Express",
+    "cartes_bancaires": "Cartes Bancaires",
+    "diners": "Diners Club",
+    "diners club": "Diners Club",
+    "discover": "Discover",
+    "eftpos_au": "Eftpos Australia",
+    "jcb": "JCB",
+    "mastercard": "Mastercard",
+    "unionpay": "UnionPay",
+    "visa": "Visa",
+}
+
+
 def card_text(brand: str, last4: str) -> str:
-    """ "Visa ending 4242"; blank without a last four. Brand and last four only."""
+    """ "Visa ending 4242"; blank without a last four. Brand and last four only. The brand
+    reads as its own name (`_CARD_BRANDS`); one Stripe adds later reads as its words
+    ("some_brand" -> "Some Brand"), and none, or Stripe's "unknown", as "Card". The one
+    rule for the receipt and the spreadsheet's payment method."""
     if not last4:
         return ""
-    return f"{brand.strip().capitalize() or 'Card'} ending {last4}"
+    key = brand.strip().lower()
+    name = _CARD_BRANDS.get(key)
+    if name is None:
+        name = "" if key == "unknown" else key.replace("_", " ").title()
+    return f"{name or 'Card'} ending {last4}"
+
+
+def posted_at(charge_ids: Iterable[int]) -> dict[int, datetime]:
+    """{charge id: when its money was first posted to the books}: the moment a payment was
+    recorded, for a charge that carries no time of its own (a deposit or balance paid
+    outright has no hold or capture time, and `updated_at` moves whenever the row is
+    touched). A charge with no ledger entry is absent. One query."""
+    rows = (
+        JournalEntry.objects.filter(charge_id__in=list(charge_ids))
+        .values("charge_id")
+        .annotate(at=Min("posted_at"))
+        .order_by()
+    )
+    return {row["charge_id"]: row["at"] for row in rows}
 
 
 # --- what it says --------------------------------------------------------------------------
@@ -216,48 +255,63 @@ def _issued(trip: Reservation) -> datetime:
     return (review and review.processed_at) or timezone.now()
 
 
-def _card(charge: Charge, plan: PaymentPlan) -> str:
-    """The card that paid this charge, else the order's card on file."""
-    if charge.card_last4:
-        return card_text(charge.card_brand, charge.card_last4)
-    return card_text(plan.card_brand, plan.card_last4)
+CARD_PAYMENT = "Card payment"
 
 
-def _method(charge: Charge, plan: PaymentPlan) -> str:
+def _method(charge: Charge) -> str:
+    """How this charge's money moved, from the charge's own record. Only the card kept on
+    the charge when it was paid is ever named: the order's card on file is the one the next
+    charge will use and may never have paid this one, so a charge with none reads "Card
+    payment" (a refund, "Refund to card")."""
+    card = card_text(charge.card_brand, charge.card_last4)
     if charge.kind == Charge.Kind.REFUND:
         how = charge.refund_method or Charge.RefundMethod.CARD
         if how != Charge.RefundMethod.CARD:
             return _REFUND_BY[how]
-        card = _card(charge, plan)
-        return f"Refund to {card}" if card else "Refund"
-    return _card(charge, plan) or "Card payment"
+        return f"Refund to {card}" if card else "Refund to card"
+    return card or CARD_PAYMENT
 
 
-def _moved_at(charge: Charge) -> datetime:
-    return charge.captured_at or charge.receipt_due_at or charge.created_at
+def _moved_at(charge: Charge, posted: dict[int, datetime]) -> datetime:
+    """When the money moved: the capture, else the moment processing moved it
+    (`receipt_due_at`), else when it was posted to the books (`posted_at`), and only
+    failing all of those when the row was made."""
+    return charge.captured_at or charge.receipt_due_at or posted.get(charge.pk) or charge.created_at
 
 
-def _payments(
-    trip: Reservation, money: trip_money.TripMoney, total: Decimal, zone: ZoneInfo
-) -> list[tuple[str, str, Decimal]]:
-    """`(date, method, amount)` for the trip's own money, oldest first: its prepaid share as
-    one row dated at the order's deposit, then each succeeded charge and refund made for the
-    trip (a refund negative; one split over several card charges is one row). The rows add
-    up to `money.allocated`. An on-account order is one "Billed to your account" row."""
-    lead = trip.lead
-    if lead.on_account:
-        return [("", ON_ACCOUNT, total)]
-    plan = getattr(lead, "payment", None)
-    if plan is None:
+def _prepaid_rows(plan: PaymentPlan, prepaid: Decimal) -> list[tuple[Charge, str, Decimal]]:
+    """`(charge whose date it takes, method, amount)` for the trip's share of what the
+    order prepaid, adding up to `prepaid`.
+
+    When the share is everything the order's deposit, balance and final-bill charges
+    collected (an order of one trip, as most are), each charge is its own row: what the
+    card statement shows. Otherwise the share is part of a pool and no one charge is it:
+    one row, dated at the order's deposit, naming a card only when every charge in the pool
+    was paid by that one card."""
+    if prepaid <= 0:
         return []
-    rows: list[tuple[datetime, str, Decimal]] = []
-    if money.prepaid > 0:
-        prepaid = plan.charges.filter(
+    charges = list(
+        plan.charges.filter(
             status=Charge.Status.SUCCEEDED, kind__in=trip_money.PREPAID_KINDS
         ).order_by("created_at", "pk")
-        first = prepaid.filter(kind=Charge.Kind.DEPOSIT).first() or prepaid.first()
-        if first is not None:
-            rows.append((_moved_at(first), _method(first, plan), money.prepaid))
+    )
+    if not charges:
+        return []
+    if sum((Decimal(c.amount) for c in charges), ZERO) == prepaid:
+        return [(c, _method(c), Decimal(c.amount)) for c in charges]
+    first = next((c for c in charges if c.kind == Charge.Kind.DEPOSIT), charges[0])
+    methods = {_method(c) for c in charges}
+    return [(first, methods.pop() if len(methods) == 1 else CARD_PAYMENT, prepaid)]
+
+
+def _own_rows(trip: Reservation) -> list[tuple[Charge, str, Decimal]]:
+    """`(charge whose date it takes, method, amount)` for the money moved for this trip
+    itself: each succeeded trip charge and captured cleaning hold, and each refund
+    (negative). The rows of a refund paid back across several charges
+    (`Charge.receipt_parent`) are one row at the first one's date while they went back the
+    same way; a part that went to another card is its own row, so no card is named for
+    money it did not get. Only rows tied to this trip are read, so a part whose head is
+    not among them stands alone."""
     own = list(
         Charge.objects.filter(
             reservation=trip,
@@ -265,26 +319,63 @@ def _payments(
             kind__in=(*TRIP_MONEY_KINDS, Charge.Kind.REFUND),
         ).order_by("created_at", "pk")
     )
-    ids = {c.pk for c in own}
-    heads = {c.pk: c for c in own if c.receipt_parent_id not in ids}
-    amounts = {pk: Decimal(c.amount) for pk, c in heads.items()}
+    by_pk = {c.pk: c for c in own}
+
+    def head(charge: Charge) -> Charge:
+        seen = {charge.pk}
+        while charge.receipt_parent_id in by_pk and charge.receipt_parent_id not in seen:
+            charge = by_pk[charge.receipt_parent_id]
+            seen.add(charge.pk)
+        return charge
+
+    rows: dict[tuple[int, str], tuple[Charge, str, Decimal]] = {}
     for charge in own:
-        if charge.pk not in heads:
-            amounts[charge.receipt_parent_id] += Decimal(charge.amount)
-    for pk, charge in heads.items():
+        first, method = head(charge), _method(charge)
         sign = -1 if charge.kind == Charge.Kind.REFUND else 1
-        rows.append((_moved_at(charge), _method(charge, plan), sign * amounts[pk]))
-    rows.sort(key=lambda row: row[0])
-    return [(_day(at, zone), method, amount.quantize(_CENTS)) for at, method, amount in rows]
+        _, _, so_far = rows.get((first.pk, method), (first, method, ZERO))
+        rows[(first.pk, method)] = (first, method, so_far + sign * Decimal(charge.amount))
+    return list(rows.values())
+
+
+def _payments(
+    trip: Reservation, money: trip_money.TripMoney, total: Decimal, zone: ZoneInfo
+) -> list[tuple[str, str, Decimal]]:
+    """`(date, method, amount)` for the trip's own money, oldest first: its share of what
+    the order prepaid (`_prepaid_rows`), then the charges and refunds made for the trip
+    (`_own_rows`). Those rows add up to `money.allocated`. An on-account order then has
+    one more, undated: "Billed to your account" for what the card rows leave of `total`
+    (all of it when there are none, nothing when a card paid it all), so its rows add up
+    to the total."""
+    lead = trip.lead
+    plan = getattr(lead, "payment", None)
+    moved: list[tuple[Charge, str, Decimal]] = []
+    if plan is not None:
+        moved = [*_prepaid_rows(plan, money.prepaid), *_own_rows(trip)]
+    undated = [c.pk for c, _, _ in moved if not (c.captured_at or c.receipt_due_at)]
+    posted = posted_at(undated) if undated else {}
+    dated = sorted(
+        ((_moved_at(c, posted), method, amount) for c, method, amount in moved),
+        key=lambda row: row[0],
+    )
+    rows = [(_day(at, zone), method, amount.quantize(_CENTS)) for at, method, amount in dated]
+    if lead.on_account:
+        rest = (total - sum((amount for _, _, amount in rows), ZERO)).quantize(_CENTS)
+        if rest > 0:
+            rows.append(("", ON_ACCOUNT, rest))
+    return rows
 
 
 def _company() -> dict:
-    """What the settings hold. There is no address setting yet, so it stays blank."""
+    """The company block, from settings. `address`, `website` and `billing_email` are
+    optional (`COMPANY_ADDRESS`, `COMPANY_WEBSITE`, `COMPANY_BILLING_EMAIL`): a blank one
+    is left off the receipt, never a placeholder."""
     return {
         "name": settings.COMPANY_NAME,
-        "address": "",
+        "address": settings.COMPANY_ADDRESS.strip(),
         "phone": dispatch_phone()["display"],
         "email": settings.COMPANY_EMAIL,
+        "website": settings.COMPANY_WEBSITE.strip(),
+        "billing_email": settings.COMPANY_BILLING_EMAIL.strip(),
     }
 
 
@@ -304,9 +395,13 @@ def receipt_context(trip: Reservation) -> dict:
         # Completed or no-show: processing settles to the price, itemised as quoted.
         lines = [(line.label, line.amount) for line in trip.price_lines()]
     payments = _payments(trip, money, total, zone)
+    # What is still owed (or, negative, the customer's credit). An on-account trip owes
+    # nothing here: what its card rows leave is billed to the account, as its last row.
     balance_due = None
-    if payments and not lead.on_account:
-        balance_due = (total - sum((a for _, _, a in payments), ZERO)).quantize(_CENTS)
+    if payments:
+        left = (total - sum((a for _, _, a in payments), ZERO)).quantize(_CENTS)
+        if not lead.on_account or left < 0:
+            balance_due = left
     contact = lead.effective_billing_contact
     stops = _stops(trip)
     return {
@@ -343,17 +438,82 @@ MARGIN = 54  # points: three-quarters of an inch
 GUTTER = 14
 
 
+def _transliterations() -> dict[str, str]:
+    """Letters the core fonts have no glyph for and Unicode gives no plain form of, as the
+    Latin a reader would write: Latin letters with a stroke, Greek, Cyrillic (Russian and
+    Ukrainian), and a few dashes and primes. An upper-case letter is its lower-case one's
+    answer, capitalised ("Щ" -> "Shch")."""
+    lower = {
+        **dict(zip("łđħıĸŧəǝ", "ldhiktee", strict=True)),
+        "ŋ": "ng",
+        **dict(zip("αβγδεζηικλμνξοπρσςτυφω", "avgdeziiklmnxoprsstufo", strict=True)),
+        **{"θ": "th", "χ": "ch", "ψ": "ps"},
+        **dict(zip("абвгдеёзийклмнопрстуфыэіґ", "abvgdeeziyklmnoprstufyeig", strict=True)),
+        **{"ж": "zh", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch"},
+        **{"ю": "yu", "я": "ya", "є": "ye", "ї": "yi", "ъ": "", "ь": ""},
+    }
+    table = dict(lower)
+    for char, plain in lower.items():
+        if char.upper() != char and len(char.upper()) == 1:
+            table.setdefault(char.upper(), plain.capitalize())
+    table.update(dict.fromkeys("\u2010\u2011\u2012\u2212", "-"))
+    table.update({"\u2015": "\u2014", "\u2032": "'", "\u2033": '"'})
+    return table
+
+
+_TRANSLITERATED = _transliterations()
+
+
+def _has_glyph(text: str) -> bool:
+    try:
+        text.encode(ENCODING)
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _printable(char: str) -> str:
+    """One character as the core fonts can draw it: itself when they have it, else its
+    nearest form. In order: the same letter with fewer accents ("ễ" -> "ê"), its plain
+    letters ("ř" -> "r", "ﬁ" -> "fi", "Ｆ" -> "F"), its transliteration ("Щ" -> "Shch"),
+    and "?" for a script with no Latin reading here (Chinese, Arabic, an emoji)."""
+    if _has_glyph(char):
+        return char
+    if char in _TRANSLITERATED:
+        return _TRANSLITERATED[char]
+    if unicodedata.category(char).startswith("M"):
+        return ""  # a stray combining mark with no letter to sit on
+    parts = unicodedata.normalize("NFKD", char)
+    if parts == char:
+        return "?"
+    letters = [c for c in parts if not unicodedata.category(c).startswith("M")]
+    marks = [c for c in parts if unicodedata.category(c).startswith("M")]
+    if len(letters) == 1:
+        for keep in range(len(marks) - 1, 0, -1):
+            nearer = unicodedata.normalize("NFC", letters[0] + "".join(marks[:keep]))
+            if len(nearer) == 1 and _has_glyph(nearer):
+                return nearer
+    return "".join(_printable(c) for c in letters)
+
+
 def pdf_text(text: str) -> str:
-    """`text` as the core fonts can print it, never raising: a character outside
-    Windows-1252 becomes its unaccented letter when it has one ("ā" -> "a"), else "?"."""
-    out = []
-    for char in text:
-        try:
-            char.encode(ENCODING)
-            out.append(char)
-        except UnicodeEncodeError:
-            plain = unicodedata.normalize("NFKD", char).encode("ascii", "ignore").decode()
-            out.append(plain or "?")
+    """`text` as the core fonts can print it, never raising, and as near to what was typed
+    as Windows-1252 allows: a name on an expense document should read as the name.
+
+    Composed first (NFC), so an accent typed as a separate mark ("e" + U+0301, as macOS
+    and some phones send it) prints as its letter. A tab or line break becomes a space;
+    every other control or invisible formatting character (C0, C1, zero-width, direction
+    marks) is dropped. A character the fonts lack becomes its nearest printable form
+    (`_printable`), "?" only where there is none."""
+    out: list[str] = []
+    for char in unicodedata.normalize("NFC", text):
+        category = unicodedata.category(char)
+        if category == "Cc":
+            # One space for a run of them ("\r\n"), and none after a space already there.
+            if char in "\t\n\r\v\f" and out and out[-1] != " ":
+                out.append(" ")
+        elif category != "Cf":
+            out.append(_printable(char))
     return "".join(out)
 
 
@@ -453,7 +613,9 @@ def _header(pdf: _Receipt, ctx: dict) -> None:
     pdf.style(18, bold=True, family="Times")
     pdf.set_xy(MARGIN + 2 * radius + 9, top + radius - 9)
     pdf.cell(250, 18, pdf_text(company["name"]))
-    details = " · ".join(v for v in (company["address"], company["phone"], company["email"]) if v)
+    details = " · ".join(
+        company[key] for key in ("address", "phone", "email", "website") if company[key]
+    )
     pdf.set_y(top + 2 * radius + 8)
     if details:
         pdf.para(details, pdf.width * 0.58, 9, color=MUTED)
@@ -561,8 +723,9 @@ def render_pdf(context: dict) -> bytes:
             pdf.row("Balance due", _money(balance), bold=True, rule=False)
     company = context["company"]
     thanks = f"Thank you for riding with {company['name']}."
-    if company["email"]:
-        thanks += f" Questions about this receipt: {company['email']}"
+    ask = company["billing_email"] or company["email"]
+    if ask:
+        thanks += f" Questions about this receipt: {ask}"
     pdf.ln(24)
     pdf.room(pdf.height_of(thanks, pdf.width, 9))
     pdf.para(thanks, pdf.width, 9, color=MUTED)

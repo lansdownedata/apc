@@ -109,7 +109,7 @@ def _note(trip: Reservation, key: str, held: dict[int, datetime]) -> str:
         return f"Requested {day}. We're preparing your quote."
     if key == "confirming":
         at = held.get(trip.lead_id)
-        received = f"Deposit received {selectors.short_day(at, trip)}. " if at else ""
+        received = f"Deposit paid {selectors.short_day(at, trip)}. " if at else ""
         return f"{received}We're confirming your vehicle."
     return ""
 
