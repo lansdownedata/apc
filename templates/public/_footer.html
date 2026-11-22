@@ -39,7 +39,7 @@ would raise NoReverseMatch today. Swap once every route exists.
           <a href="/blogs/" class="rounded focus-gold transition-colors hover:text-white">Blog</a>
           <a href="/about-us/" class="rounded focus-gold transition-colors hover:text-white">About</a>
           <a href="/contact/" class="rounded focus-gold transition-colors hover:text-white">Contact</a>
-          <a href="{% url 'customers:login' %}" class="rounded focus-gold transition-colors hover:text-white">Customer login</a>
+          {% if site_customer %}<a href="{% url 'customers:home' %}" class="rounded focus-gold transition-colors hover:text-white">My account</a>{% else %}<a href="{% url 'customers:login' %}" class="rounded focus-gold transition-colors hover:text-white">Customer sign in</a>{% endif %}
         </nav>
       </div>
 

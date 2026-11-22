@@ -1,0 +1,37 @@
+{% comment %}
+  The account control in the top-right corner of both headers: the customer's initials
+  and first name, opening the same panel on the website and in the portal. Pass
+  `who` (`site_customer`) and `where`: "site" lists the portal's pages, "portal" lists
+  Account settings, the dispatch number on a phone (`dispatch`), and the way back.
+{% endcomment %}
+<div class="relative" x-data="{ open: false }" @keydown.escape.window="open = false" @click.outside="open = false">
+  <button type="button" @click="open = !open" :aria-expanded="open.toString()" aria-expanded="false" aria-controls="account-menu"
+          aria-label="Your account, {{ who.name }}"
+          class="inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-2 text-[13px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold sm:pr-2.5">
+    <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-charcoal text-[10px] font-bold leading-none text-gold">{{ who.initials }}</span>
+    <span class="hidden max-w-32 truncate sm:block">{{ who.first_name }}</span>
+    {% icon "chevron-down" class="hidden h-3.5 w-3.5 text-muted sm:block" %}
+  </button>
+  <div id="account-menu" x-show="open" x-cloak x-transition.opacity.duration.150ms
+       class="absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-line bg-surface p-1.5 text-[13.5px] font-medium text-ink shadow-xl">
+    <div class="border-b border-line px-3 pb-3 pt-2">
+      <p class="truncate text-[13.5px] font-semibold text-ink">{{ who.name }}</p>
+      <p class="truncate text-[12px] font-normal text-muted">{{ who.email }}</p>
+    </div>
+    <div class="pt-1.5">
+      {% if where == "site" %}
+      <a href="{% url 'customers:home' %}" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold">{% icon "home" class="h-4 w-4 text-muted" %}My account</a>
+      <a href="{% url 'customers:trips' %}" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold">{% icon "receipt" class="h-4 w-4 text-muted" %}Trips and receipts</a>
+      <a href="{% url 'customers:request_trip' %}" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold">{% icon "plus" class="h-4 w-4 text-muted" %}Request a trip</a>
+      {% else %}
+      <a href="{% url 'customers:account' %}" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold">{% icon "user" class="h-4 w-4 text-muted" %}Account settings</a>
+      <a href="tel:{{ dispatch.tel }}" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold sm:hidden">{% icon "phone" class="h-4 w-4 text-muted" %}<span class="whitespace-nowrap">Call dispatch</span> <span class="num ml-auto whitespace-nowrap text-[12.5px] text-muted">{{ dispatch.display }}</span></a>
+      <a href="/" class="flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-surface2 focus-gold">{% icon "external-link" class="h-4 w-4 text-muted" %}Back to website</a>
+      {% endif %}
+    </div>
+    <form method="post" action="{% url 'customers:logout' %}" class="mt-1.5 border-t border-line pt-1.5">
+      {% csrf_token %}
+      <button type="submit" class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface2 focus-gold">{% icon "logout" class="h-4 w-4 text-muted" %}Sign out</button>
+    </form>
+  </div>
+</div>

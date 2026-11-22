@@ -1,7 +1,8 @@
 {% extends "customers/_auth.html" %}
 {% block title %}Sign in{% endblock %}
 {% block card %}
-<h1 class="mt-6 text-center font-display text-[22px] font-semibold leading-tight text-ink">Sign in to your account</h1>
+<h1 class="mt-6 font-display text-[22px] font-semibold leading-tight text-ink">Sign in to your account</h1>
+<p class="mt-1.5 text-[13px] leading-relaxed text-muted">Your trips, receipts and trip requests in one place.</p>
 {% if throttled %}
 <p role="alert" class="mt-5 rounded-xl bg-amber-50 px-3.5 py-3 text-[13px] leading-relaxed text-amber-800 ring-1 ring-inset ring-amber-600/20">
   Too many attempts. Wait a few minutes and try again, or reset your password.
