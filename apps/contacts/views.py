@@ -32,6 +32,7 @@ from apps.audit.children import track_address
 from apps.billing import selectors as billing_selectors
 from apps.core.choices import Channel
 from apps.core.templatetags.phone_filters import phone_display
+from apps.customers import selectors as customer_selectors
 from apps.leads.models import Lead
 from apps.messaging.models import Message
 from apps.payments.models import PaymentPlan
@@ -205,7 +206,12 @@ def _phones_payload(contact: Contact) -> list[dict[str, object]]:
 @login_required
 def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
     """The customer profile — header stats, phone numbers, details, messages, orders."""
-    contact = get_object_or_404(Contact.objects.select_related("company"), pk=pk)
+    contact = get_object_or_404(
+        Contact.objects.select_related(
+            "company", "customer_account__invited_by", "customer_account__revoked_by"
+        ),
+        pk=pk,
+    )
     leads = list(
         contact.leads.select_related("payment")
         .prefetch_related("reservations")
@@ -245,6 +251,7 @@ def contact_detail(request: HttpRequest, pk: int) -> HttpResponse:
             # billing screen (Phase 6) can never disagree about what a customer owes.
             **billing_selectors.billing_context(contact),
             "planner_access": planner_selectors.access_for(contact),
+            "customer_access": customer_selectors.access_for(contact),
         },
     )
 

@@ -155,16 +155,35 @@ def _account_for(email: str) -> CustomerAccount | None:
 # --- staff actions ---------------------------------------------------------------------
 
 
+AFFILIATE_REFUSED = "Portal access is not available for affiliate companies."
+NOT_ACTIVE_FOR_RESET = "Only a customer who has signed up can get a password reset."
+
+
+def is_affiliate(contact: Contact) -> bool:
+    """Whether the contact books for an affiliate company: its portal would show no trips
+    (`selectors.visible_trips` leaves farm-ins out) and could not request one."""
+    company = contact.company
+    return company is not None and company.is_affiliate_account
+
+
+def no_email_message(contact: Contact, *, inviting: bool = True) -> str:
+    if inviting:
+        return f"Add an email address for {contact.name} before inviting them."
+    return f"Add an email address for {contact.name} first."
+
+
 def invite(contact: Contact, *, actor: User | None) -> tuple[CustomerAccount, bool]:
     """Give `contact` a pending customer account and email the set-password link.
 
     A revoked account is re-opened: a fresh invite, a fresh password set by the customer.
-    Returns (account, email_sent); the account is kept when delivery fails so staff can
-    use Resend.
+    Refused for a contact of an affiliate company. Returns (account, email_sent); the
+    account is kept when delivery fails so staff can use Resend.
     """
     _assert_outbound()
     if not (contact.email or "").strip():
-        raise CustomerError(f"Add an email address for {contact.name} before inviting them.")
+        raise CustomerError(no_email_message(contact))
+    if is_affiliate(contact):
+        raise CustomerError(AFFILIATE_REFUSED)
     account = CustomerAccount.objects.filter(contact=contact).first()
     if account is not None and account.status == CustomerAccount.Status.ACTIVE:
         raise CustomerError(f"{contact.name} already has a customer account.")
@@ -201,6 +220,20 @@ def revoke(account: CustomerAccount, *, actor: User | None) -> None:
     account.revoked_by = actor
     account.set_unusable_password()
     account.save(update_fields=["revoked_at", "revoked_by", "password", "updated_at"])
+
+
+def staff_password_reset(account: CustomerAccount) -> bool:
+    """A reset link sent by staff from the contact profile. Refused, with a reason, while
+    the go-live switch is off or before the customer has signed up; otherwise it is the
+    customer's own reset (`send_password_reset`), under the same hourly cap. Returns
+    whether an email went: False past the cap, so staff are never told one went when it
+    did not."""
+    _assert_outbound()
+    if account.status != CustomerAccount.Status.ACTIVE:
+        raise CustomerError(NOT_ACTIVE_FOR_RESET)
+    if not account.email:
+        raise CustomerError(no_email_message(account.contact, inviting=False))
+    return send_password_reset(account.email)
 
 
 # --- the customer's own actions --------------------------------------------------------

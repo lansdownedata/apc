@@ -1,0 +1,59 @@
+{% load json_filters %}
+{% comment %}
+  Customer portal access on the contact profile (spec 2026-11-20 §12), beside the planner
+  access card and built like it: the state, one line of who did what when, then the actions
+  that apply. A blocked send (affiliate company, no email, go-live switch off) shows its
+  reason with the button disabled. Revoke is never blocked.
+{% endcomment %}
+{% with ca=customer_access %}
+<section class="card flex flex-wrap items-center gap-x-4 gap-y-3 p-5" aria-label="Customer portal">
+  <div class="min-w-0 flex-1">
+    <div class="flex items-center gap-2">
+      <h2 class="font-display text-[15px] font-semibold text-ink">Customer portal</h2>
+      <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset {% if ca.status == 'active' %}bg-emerald-50 text-emerald-700 ring-emerald-600/20{% elif ca.status == 'invited' %}bg-goldl text-goldd ring-gold/25{% elif ca.status == 'revoked' %}bg-rose-50 text-rose-700 ring-rose-600/20{% else %}bg-slate-100 text-slate-500 ring-slate-500/20{% endif %}">{{ ca.label }}</span>
+    </div>
+    <p class="mt-0.5 text-[12.5px] text-muted">{{ ca.line }}</p>
+    {% if ca.blocked_reason %}<p class="mt-1 text-[12px] text-amber-700">{{ ca.blocked_reason }}</p>{% endif %}
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    {% if ca.show_invite %}
+    <form method="post" action="{% url 'customer_invite' contact.pk %}">
+      {% csrf_token %}
+      <button type="submit" {% if not ca.can_invite %}disabled aria-disabled="true"{% endif %} class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+        <i class="ti ti-mail text-[15px] text-goldd"></i>Send invite
+      </button>
+    </form>
+    {% endif %}
+    {% if ca.show_resend %}
+    <form method="post" action="{% url 'customer_resend' contact.pk %}">
+      {% csrf_token %}
+      <button type="submit" {% if ca.blocked_reason %}disabled aria-disabled="true"{% endif %} class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+        <i class="ti ti-send text-[15px] text-goldd"></i>Resend
+      </button>
+    </form>
+    {% endif %}
+    {% if ca.show_reset %}
+    <form method="post" action="{% url 'customer_reset' contact.pk %}">
+      {% csrf_token %}
+      <button type="submit" {% if ca.blocked_reason %}disabled aria-disabled="true"{% endif %} class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-ink ring-1 ring-line transition-colors hover:bg-surface2 focus-gold disabled:cursor-not-allowed disabled:opacity-50">
+        <i class="ti ti-key text-[15px] text-goldd"></i>Send password reset
+      </button>
+    </form>
+    {% endif %}
+    {% if ca.can_revoke %}
+    <form method="post" action="{% url 'customer_revoke' contact.pk %}" x-data x-ref="customerRevokeForm">
+      {% csrf_token %}
+      <button type="button"
+              class="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-[12.5px] font-semibold text-rose-700 ring-1 ring-line transition-colors hover:bg-rose-50 focus-gold disabled:cursor-not-allowed disabled:opacity-50"
+              @click="$store.modal.confirm({
+                title: 'Revoke portal access',
+                message: {{ contact.name|json_string }} + ' is signed out and can no longer sign in to the customer portal. Their invite link stops working too. You can invite them again any time.',
+                variant: 'danger',
+                confirmText: 'Revoke access',
+                onConfirm: () => $refs.customerRevokeForm.submit(),
+              })">{% if ca.status == 'invited' %}Revoke{% else %}Revoke access{% endif %}</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+{% endwith %}
