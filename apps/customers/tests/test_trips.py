@@ -356,6 +356,27 @@ def test_unpriced_request_shows_dash(account, client_as, make_trip):
     assert "—" in row and not re.search(r"\$\s*\d", row)
 
 
+def test_a_draft_rate_on_a_new_lead_shows_no_amount_until_the_quote_is_sent(
+    account, client_as, make_trip
+):
+    _done(account, make_trip, _day(-3), rate=100)
+    draft = _request(account, make_trip, _day(30), rate=185)
+
+    result = _trips(account, tab="all")
+    row = next(r for g in result["groups"] for r in g["rows"] if r["pk"] == draft.pk)
+    assert row["total"] is None
+    assert result["total"] == Decimal("100.00")
+    body = _get(client_as(account), tab="all")
+    html_row = re.search(rf'data-trip="{draft.pk}".*?</tr>', body, re.S).group(0)
+    assert "—" in html_row and "$185.00" not in body
+    assert f'data-pick="{draft.pk}" data-amount="0.00"' in body
+
+    draft.lead.status = Lead.Status.QUOTED
+    draft.lead.quote_expires_at = timezone.now() + timedelta(days=9)
+    draft.lead.save(update_fields=["status", "quote_expires_at"])
+    assert "$185.00" in _get(client_as(account), tab="all")
+
+
 def test_page_shows_header_count_rows_and_one_plain_total(account, client_as, make_trip):
     _done(account, make_trip, date(2026, 11, 18), rate=100, customer_reference="Board offsite")
     _done(account, make_trip, date(2026, 10, 27), rate=100)

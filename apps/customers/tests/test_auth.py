@@ -5,7 +5,7 @@ from urllib.parse import quote
 import pytest
 from django.contrib.auth import get_user
 from django.http import HttpRequest, HttpResponse
-from django.test import RequestFactory
+from django.test import Client, RequestFactory
 from django.urls import include, path, resolve, reverse
 from django.utils import timezone
 
@@ -147,6 +147,23 @@ def test_cleared_contact_email_ends_the_session(client_as, account):
     account.contact.email = None
     account.contact.save(update_fields=["email"])
     assert client.get(PROBE)["Location"] == _login_redirect(PROBE)
+
+
+@with_probe
+def test_a_staff_email_change_ends_the_session_and_the_password_carries_over(client_as, account):
+    client = client_as(account)
+    assert client.get(PROBE).status_code == 200
+    account.contact.email = "new.booker@example.com"
+    account.contact.save(update_fields=["email"])
+
+    assert client.get(PROBE)["Location"] == _login_redirect(PROBE)
+    assert SESSION_KEY not in client.session
+    fresh = Client()
+    fresh.post(
+        reverse("customers:login"),
+        {"email": "new.booker@example.com", "password": "correct horse battery"},
+    )
+    assert fresh.get(PROBE).status_code == 200
 
 
 @with_probe

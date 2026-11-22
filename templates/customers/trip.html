@@ -146,7 +146,7 @@
       {% if trip.has_receipt %}
       <a href="{% url 'customers:receipt' trip.pk %}" class="mt-4 inline-flex h-9 items-center rounded-lg bg-onyx px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 focus-gold">Download receipt</a>
       {% elif trip.receipt_pending %}
-      <p class="mt-4 text-[12.5px] text-muted">Receipt available once your trip is finalised.</p>
+      <p class="mt-4 text-[12.5px] text-muted">Receipt available once your trip is finalized.</p>
       {% endif %}
     </section>
   </div>

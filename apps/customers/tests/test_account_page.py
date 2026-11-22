@@ -89,6 +89,12 @@ def test_the_page_shows_email_and_company_as_read_only(client_as):
     assert 'name="email"' not in html and 'name="company"' not in html
 
 
+def test_a_contact_with_no_company_has_no_company_row(client_as):
+    html = client_as(_account(email="dana@example.com", company=None)).get(URL).content.decode()
+    assert ">Company<" not in html and "None" not in html
+    assert "dana@example.com" in html
+
+
 def test_invalid_mobile_is_a_form_error(client_as):
     account = _account(name="Before")
     response = client_as(account).post(URL, _details(mobile="12"))

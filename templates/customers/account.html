@@ -22,11 +22,13 @@
                class="field{% if details.name.errors %} field-error{% endif %}">
         {% for e in details.name.errors %}<p class="mt-1 text-[12px] text-rose-700">{{ e }}</p>{% endfor %}
       </div>
+      {% if company %}
       <div>
         <span class="mb-1 block text-[12px] font-medium text-muted">Company</span>
-        <p class="py-2.5 text-[13.5px] text-ink">{{ company|default:"None" }}</p>
+        <p class="py-2.5 text-[13.5px] text-ink">{{ company }}</p>
         <p class="text-[12px] text-muted">Contact us to change this: <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a></p>
       </div>
+      {% endif %}
       <div>
         <label for="acc-mobile" class="mb-1 block text-[12px] font-medium text-muted">Mobile</label>
         <input id="acc-mobile" type="tel" name="mobile" value="{{ details.mobile.value|default:'' }}" autocomplete="tel"

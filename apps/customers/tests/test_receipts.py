@@ -216,7 +216,7 @@ def test_unprocessed_late_cancel_has_no_receipt_yet(account, client_as, make_tri
     assert not receipts.has_receipt(_scoped(account, trip))
     assert client.get(_url(trip)).status_code == 404
     html = client.get(reverse("customers:trip", args=[trip.pk])).content.decode()
-    assert "Receipt available once your trip is finalised." in html
+    assert "Receipt available once your trip is finalized." in html
     assert "Download receipt" not in html
 
 
@@ -264,7 +264,7 @@ def test_unprocessed_no_show_waits_for_processing(account, client_as, make_trip)
     assert not receipts.has_receipt(_scoped(account, trip))
     assert client.get(_url(trip)).status_code == 404
     html = client.get(reverse("customers:trip", args=[trip.pk])).content.decode()
-    assert "Receipt available once your trip is finalised." in html
+    assert "Receipt available once your trip is finalized." in html
 
 
 def test_no_receipt_for_nothing(account, make_trip):
@@ -624,11 +624,11 @@ def test_trip_page_offers_the_receipt_or_says_when(account, client_as, make_trip
     html = client.get(reverse("customers:trip", args=[ready.pk])).content.decode()
     assert f'href="{_url(ready)}"' in html
     assert "Download receipt" in html
-    assert "Receipt available once your trip is finalised." not in html
+    assert "Receipt available once your trip is finalized." not in html
 
     html = client.get(reverse("customers:trip", args=[waiting.pk])).content.decode()
     assert "Download receipt" not in html
-    assert "Receipt available once your trip is finalised." in html
+    assert "Receipt available once your trip is finalized." in html
 
     html = client.get(reverse("customers:trip", args=[upcoming.pk])).content.decode()
     assert "Download receipt" not in html

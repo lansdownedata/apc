@@ -89,6 +89,24 @@ def test_the_sign_in_page_matches_the_mockup(client):
     assert "Sign out" not in html  # the signed-in nav is not on a signed-out page
 
 
+@pytest.mark.parametrize("name", ["customers:login", "customers:signup"])
+def test_a_signed_in_customer_skips_sign_in_and_sign_up(client_as, account, name):
+    client = client_as(account)
+    response = client.get(reverse(name))
+    assert response.status_code == 302
+    assert response.url == reverse("customers:home")
+    nexted = client.get(reverse(name), {"next": "/account/trips/"})
+    assert nexted.url == "/account/trips/"
+    assert client.get(reverse(name), {"next": "/portal/"}).url == reverse("customers:home")
+
+
+@pytest.mark.parametrize("name", ["customers:login", "customers:signup"])
+def test_a_signed_out_visitor_sees_the_sign_in_and_sign_up_forms(client, name):
+    response = client.get(reverse(name))
+    assert response.status_code == 200
+    assert 'name="email"' in response.content.decode()
+
+
 def test_wrong_password_shows_one_generic_error(client, account):
     wrong = _login(client, account.email, "not the password")
     unknown = _login(client, "nobody@example.com", "not the password")

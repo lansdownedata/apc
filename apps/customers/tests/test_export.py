@@ -101,6 +101,16 @@ def test_a_row_reads_as_a_spreadsheet_wants_it(account, make_trip):
     assert cells["Payment method"] == ""
 
 
+def test_a_draft_rate_on_a_new_lead_has_blank_money_until_the_quote_is_sent(account, make_trip):
+    trip = make_trip(account, lead__status=Lead.Status.NEW, rate=185, pickup_date=_day(5))
+    cells = _cells(account)
+    assert cells["Total"] == "" and cells["Paid"] == ""
+
+    trip.lead.status = Lead.Status.QUOTED
+    trip.lead.save(update_fields=["status"])
+    assert _cells(account)["Total"] == f"{trip.line_total:.2f}"
+
+
 def test_an_unpriced_trip_has_blank_money(account, make_trip):
     make_trip(account, lead__status=Lead.Status.NEW, rate=0, pickup_date=_day(5))
     cells = _cells(account)

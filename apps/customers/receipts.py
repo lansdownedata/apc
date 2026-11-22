@@ -26,6 +26,7 @@ from fpdf import FPDF
 from fpdf.enums import Align, XPos, YPos
 
 from apps.dispatch.selectors import CANCELLED_STATUSES
+from apps.leads.models import Lead
 from apps.payments import trip_money
 from apps.payments.models import Charge, PaymentPlan
 from apps.payments.services import TRIP_MONEY_KINDS
@@ -53,8 +54,10 @@ _REFUND_BY = {
 
 
 def priced(trip: Reservation) -> bool:
-    """The trip has a price: a request nobody has quoted yet does not."""
-    return Decimal(trip.rate or 0) > 0
+    """The trip has a price the customer may see. A request nobody has quoted yet does not,
+    and nor does one staff are still pricing: while the order is New, a rate typed in is a
+    draft nobody has sent, so no figure, line, paid amount or receipt shows for it."""
+    return trip.lead.status != Lead.Status.NEW and Decimal(trip.rate or 0) > 0
 
 
 def _processed(trip: Reservation) -> bool:
@@ -77,7 +80,8 @@ def shows_kept(trip: Reservation) -> bool:
 
 def customer_total(trip: Reservation, kept: Decimal | None = None) -> Decimal | None:
     """The customer's figure for this trip, wherever it shows (Trips row and foot total,
-    trip page, spreadsheet, receipt): None while unpriced; the money kept on a cancelled
+    trip page, spreadsheet, receipt): None while unpriced (`priced`: no rate yet, or the
+    order still New and the quote unsent); the money kept on a cancelled
     trip not settled by processing (`kept`, its `money_for(trip).allocated`, when the
     caller has it: lists batch it); otherwise the trip's price, `line_total`."""
     if not priced(trip):

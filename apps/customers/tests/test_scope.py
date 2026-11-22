@@ -499,5 +499,6 @@ def test_cancelled_trip_total_is_amount_kept(account):
 
 
 def test_display_total_is_the_line_total_or_none_when_unpriced():
-    assert selectors.display_total(ReservationFactory(rate=185)) == Decimal("185.00")
+    quoted = LeadFactory(status=Lead.Status.QUOTED)
+    assert selectors.display_total(ReservationFactory(lead=quoted, rate=185)) == Decimal("185.00")
     assert selectors.display_total(ReservationFactory(rate=0)) is None

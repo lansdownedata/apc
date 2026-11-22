@@ -7,7 +7,7 @@ signed-in customer is an anonymous visitor; a staff session, in turn, never pass
 `customer_required`.
 
 `customer_required` re-reads the account on every request, so Revoke, a new password or a
-cleared contact email take effect on the very next page load.
+changed or cleared contact email take effect on the very next page load.
 """
 
 from __future__ import annotations
@@ -29,8 +29,10 @@ HASH_SESSION_KEY = "customer_auth_hash"
 
 
 def _session_hash(account: CustomerAccount) -> str:
+    """Covers the password and the sign-in email, so a new password or a staff change of
+    the contact's email ends every session opened before it."""
     return salted_hmac(
-        "apps.customers.auth.session", account.password, algorithm="sha256"
+        "apps.customers.auth.session", f"{account.email}\n{account.password}", algorithm="sha256"
     ).hexdigest()
 
 
@@ -52,7 +54,8 @@ def sign_out(request: HttpRequest) -> None:
 
 def current_customer(request: HttpRequest) -> CustomerAccount | None:
     """The signed-in customer, or None. A session whose account was revoked, whose
-    password changed since sign-in, or whose contact lost its email is ended here."""
+    password or contact email changed since sign-in, or whose contact lost its email is
+    ended here."""
     pk = request.session.get(SESSION_KEY)
     if pk is None:
         return None

@@ -426,7 +426,7 @@ def test_an_on_account_order_is_billed_to_the_account(account, make_trip):
 
 
 def test_charges_are_the_trips_price_lines_and_total(account, client_as, make_trip):
-    trip = make_trip(account, rate=170, hours=1, gratuity_pct=20)
+    trip = make_trip(account, lead__status=Lead.Status.QUOTED, rate=170, hours=1, gratuity_pct=20)
     TripExtraFactory(reservation=trip, label="Airport fee", amount=10)
     trip.refresh_extras_total()
 
@@ -440,6 +440,26 @@ def test_charges_are_the_trips_price_lines_and_total(account, client_as, make_tr
     assert detail["total"] == Decimal("214.00")
     body = _body(client_as(account), trip)
     assert "Gratuity (20%)" in body and "$214.00" in body
+
+
+def test_a_draft_rate_on_a_new_lead_shows_no_charges_until_the_quote_is_sent(
+    account, client_as, make_trip
+):
+    trip = make_trip(account, lead__status=Lead.Status.NEW, rate=170, hours=1, gratuity_pct=20)
+
+    detail = _detail(account, trip)
+    body = _body(client_as(account), trip)
+
+    assert detail["total"] is None and detail["price_lines"] == []
+    assert detail["paid_line"] == "" and detail["has_receipt"] is False
+    assert "We're preparing your quote." in body
+    assert "Base fare" not in body and "$204.00" not in body
+
+    trip.lead.status = Lead.Status.QUOTED
+    trip.lead.save(update_fields=["status"])
+    body = _body(client_as(account), trip)
+    assert "Base fare" in body and "$204.00" in body
+    assert "We're preparing your quote." not in body
 
 
 def test_a_cancelled_trip_charges_what_was_kept(account, make_trip):

@@ -38,7 +38,7 @@ from apps.core.templatetags.phone_filters import phone_display
 from apps.planners.selectors import dispatch_phone
 
 from . import exports, receipts, requests, selectors, services, trip_detail
-from .auth import FRAGMENT_PARAM, customer_required, sign_in, sign_out
+from .auth import FRAGMENT_PARAM, current_customer, customer_required, sign_in, sign_out
 from .forms import (
     RIDERS,
     ChangePasswordForm,
@@ -129,6 +129,10 @@ def _link_invalid(request: HttpRequest, message: str = "") -> HttpResponse:
 
 @sensitive_post_parameters("password")
 def login(request: HttpRequest) -> HttpResponse:
+    """A customer already signed in (the public "Customer login" link is how returning
+    customers arrive) goes straight on, to a safe `next` or Home."""
+    if current_customer(request) is not None:
+        return redirect(_safe_next(request))
     context = {"next": request.POST.get("next") or request.GET.get("next") or ""}
     if request.method == "POST":
         if _over(request, "login", LOGIN_FAILURE_LIMIT):
@@ -155,7 +159,10 @@ def logout(request: HttpRequest) -> HttpResponse:
 
 def signup(request: HttpRequest) -> HttpResponse:
     """Step 1, then step 2 ("Check your email") with the typed email, whatever happened to
-    it. Only a site-wide refusal (sending off, no public address) shows here instead."""
+    it. Only a site-wide refusal (sending off, no public address) shows here instead. A
+    customer already signed in goes straight on, as from the sign-in page."""
+    if current_customer(request) is not None:
+        return redirect(_safe_next(request))
     form = SignupForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         data = form.cleaned_data
