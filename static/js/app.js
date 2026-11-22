@@ -6448,3 +6448,75 @@ function customerReference({ url, id }) {
   };
 }
 window.customerReference = customerReference;
+
+/* ------------------------------------------- customer portal: change and cancel requests
+ * (mockups 6 and 7). The form lives in a <template> on the trip page (#ask-change,
+ * #ask-cancel) and opens in the shared modal; Send posts it with fetch. On `{ok: true}` the
+ * page reloads to show the pending state and the toast the server queued. A refusal is
+ * written inside the dialog, which stays open with what was typed; a lapsed session reloads
+ * the page, as the reference save does. `?ask=change` (Home's "Request a change") opens the
+ * change dialog on load. */
+function customerAsk() {
+  return {
+    init() {
+      const params = new URLSearchParams(window.location.search);
+      const kind = params.get("ask");
+      if (!kind) return;
+      params.delete("ask");
+      const query = params.toString();
+      history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+      this.open(kind);
+    },
+
+    open(kind) {
+      const tpl = document.getElementById(`ask-${kind}`);
+      if (!tpl) return;
+      const modal = Alpine.store("modal");
+      const { url, title, confirm, cancel, variant } = tpl.dataset;
+      modal.show({
+        title,
+        // The comment makes each opening a new value, so the modal draws a fresh form
+        // rather than keeping the last one's ticks, text and error.
+        html: `${tpl.innerHTML}<!-- ${Date.now()} -->`,
+        variant,
+        confirmText: confirm,
+        cancelText: cancel,
+        onConfirm: () => this._send(url),
+      });
+      Alpine.nextTick(() => {
+        const form = document.getElementById("ask-form");
+        if (!form) return;
+        initTomSelects(form);
+        form.onsubmit = (e) => {
+          e.preventDefault();
+          if (!modal.busy) modal.accept();
+        };
+        (form.querySelector("input[type=checkbox]") || document.getElementById("ask-body"))?.focus();
+      });
+    },
+
+    async _send(url) {
+      const form = document.getElementById("ask-form");
+      const error = document.getElementById("ask-error");
+      if (error) error.textContent = "";
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { ...CUSTOMER_AJAX, Accept: "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: new FormData(form),
+      }).catch(() => null);
+      const json = resp && !customerSignedOut(resp) ? await resp.json().catch(() => null) : null;
+      if (resp && (customerSignedOut(resp) || (resp.ok && json === null))) {
+        window.location.reload();
+        throw new Error("signed out");
+      }
+      if (json && json.ok) {
+        window.location.reload();
+        // Keep the spinner until the page has gone.
+        return new Promise(() => {});
+      }
+      if (error) error.textContent = (json && json.error) || "Your request didn't send. Try again.";
+      throw new Error("not sent");
+    },
+  };
+}
+window.customerAsk = customerAsk;

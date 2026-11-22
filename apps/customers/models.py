@@ -86,3 +86,32 @@ class CustomerAccount(TimeStampedModel):
 
     def check_password(self, raw: str) -> bool:
         return self.has_usable_password() and check_password(raw, self.password)
+
+
+class CustomerRequest(TimeStampedModel):
+    """One "Request a change" or "Request to cancel" a customer sent about a trip (spec §9):
+    the inbound message it became in the Inbox and the Customer Service task it opened.
+    Also the rate limit's ledger. Nothing on the trip changes; staff act on the task."""
+
+    class Kind(models.TextChoices):
+        CHANGE = "change", "Change"
+        CANCEL = "cancel", "Cancellation"
+
+    account = models.ForeignKey(CustomerAccount, related_name="requests", on_delete=models.CASCADE)
+    reservation = models.ForeignKey(
+        "reservations.Reservation", related_name="customer_requests", on_delete=models.CASCADE
+    )
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    # The chosen `requests.CHANGE_TOPICS`, joined with ", "; blank for a cancellation.
+    topics = models.CharField(max_length=255, blank=True)
+    # One of `requests.CANCEL_REASONS`; blank for a change.
+    reason = models.CharField(max_length=64, blank=True)
+    message = models.OneToOneField(
+        "messaging.Message", related_name="customer_request", null=True, on_delete=models.SET_NULL
+    )
+    task = models.OneToOneField(
+        "tasks.Task", related_name="customer_request", null=True, on_delete=models.SET_NULL
+    )
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} request · {self.account} · {self.reservation_id}"

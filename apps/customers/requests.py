@@ -4,7 +4,8 @@ Every write to an existing trip resolves it through `selectors.visible_trips(acc
 an id from another account is skipped, never written. `Reservation` is audited: each
 changed trip is saved on its own with `update_fields`, so the trail records it under the
 request's source (`customer portal`, `apps.audit.middleware`). A requested trip is a new
-lead on the account's own contact (`request_trip`).
+lead on the account's own contact (`request_trip`). A change or cancellation is only asked
+for (`ask`): a message in the Inbox and a task for staff, and the trip stays as it is.
 """
 
 from __future__ import annotations
@@ -21,12 +22,15 @@ from apps.core.choices import Channel
 from apps.core.phone import to_e164
 from apps.leads.models import Lead
 from apps.notifications.models import Notification
+from apps.planners.services import RequestRefused
+from apps.public.wedding import format_clock
 from apps.reservations.flights import link_flights
 from apps.reservations.models import Passenger, Reservation, Stop
 from apps.reservations.passengers import NAME_MAX
+from apps.tasks.models import Task
 
-from .models import CustomerAccount
-from .selectors import visible_trips
+from .models import CustomerAccount, CustomerRequest
+from .selectors import _short_day, label_key, visible_trips
 from .services import CustomerError
 
 REFERENCE_MAX = Reservation._meta.get_field("customer_reference").max_length
@@ -229,3 +233,151 @@ def recent_addresses(account: CustomerAccount, limit: int = 5) -> list[dict]:
         if len(recent) == limit:
             break
     return recent
+
+
+# --- ask for a change or a cancellation (spec §9) ----------------------------------------
+
+CHANGE_TOPICS = (
+    "Date or time",
+    "Pickup",
+    "Drop-off",
+    "Passengers",
+    "Vehicle",
+    "Flight",
+    "Something else",
+)
+CANCEL_REASONS = ("Plans changed", "Booked by mistake", "Found another option", "Other")
+# The planner request's limits (`planners.services`): per account, per rolling hour.
+ASK_LIMIT = 10
+ASK_WINDOW = timedelta(hours=1)
+ASK_MAX_LENGTH = 2000
+# The same words from the same account about the same trip inside this window are a
+# double tap on Send, not a second request.
+ASK_DUPLICATE_WINDOW = timedelta(seconds=30)
+# A change or cancellation may be asked for on these labels (`selectors.LABELS`).
+ASKABLE = frozenset({"quote_ready", "confirming", "confirmed", "driver_assigned"})
+_TASK_KIND = {
+    CustomerRequest.Kind.CHANGE: "customer_change_request",
+    CustomerRequest.Kind.CANCEL: "customer_cancel_request",
+}
+
+
+def can_ask(trip: Reservation, key: str | None = None) -> bool:
+    """Whether the trip takes a change or cancellation request: Quote ready, Confirming,
+    Confirmed or Driver assigned, and its pickup (in the trip's own zone) still ahead. A
+    trip with no date yet counts as ahead. `key` is `selectors.label_key(trip)` when the
+    caller has it."""
+    at = trip.pickup_at
+    key = label_key(trip) if key is None else key
+    return key in ASKABLE and (at is None or at > timezone.now())
+
+
+def when(trip: Reservation) -> str:
+    """ "Thu, Dec 3 at 9:10 AM EST": the pickup in the trip's own zone, as far as known."""
+    day = trip.pickup_date
+    if day is None:
+        return "Date to be confirmed"
+    text = f"{day:%a, %b} {day.day}"
+    if trip.pickup_time:
+        text = f"{text} at {format_clock(trip.pickup_time)} {trip.pickup_tz_label}"
+    return text
+
+
+def _composed(trip: Reservation, kind: str, topics: list[str], reason: str, text: str) -> str:
+    """The Inbox message: what is asked, which trip and when, the choice, then their words."""
+    if kind == CustomerRequest.Kind.CHANGE:
+        head = f"Customer change request · {trip.reference} · {when(trip)}"
+        choice = f"About: {', '.join(topics)}" if topics else ""
+    else:
+        head = f"Customer cancellation request · {trip.reference} · {when(trip)}"
+        choice = f"Reason: {reason}"
+    first = "\n".join(line for line in (head, choice) if line)
+    return f"{first}\n\n{text}" if text else first
+
+
+def ask(
+    account: CustomerAccount,
+    trip: Reservation,
+    *,
+    kind: str,
+    topics: list[str],
+    reason: str,
+    body: str,
+) -> CustomerRequest:
+    """Record a customer's change (`kind="change"`) or cancellation (`"cancel"`) request
+    about `trip` as an inbound message on the account's own conversation, and open a
+    Customer Service task on the trip's order. The caller resolved `trip` through
+    `selectors.visible_trips(account)`. Nothing on the trip or its order is changed.
+
+    `topics` keeps only `CHANGE_TOPICS` (in their order); a reason outside
+    `CANCEL_REASONS` is "Other". The body is required for a change and optional for a
+    cancel, at most `ASK_MAX_LENGTH` characters. The same request again inside
+    `ASK_DUPLICATE_WINDOW` returns the first. Raises `RequestRefused` with `closed` (the
+    trip no longer takes requests, `can_ask`), `blank`, `too_long` or `limited` (past
+    `ASK_LIMIT` in the rolling hour). An archived conversation stays archived: the
+    message is still recorded and the task still opens, so the request can't be lost."""
+    from apps.messaging import services as messaging
+    from apps.messaging.models import Message
+    from apps.tasks import services as tasks
+
+    if kind not in _TASK_KIND:
+        raise ValueError(f"unknown request kind {kind!r}")
+    if not can_ask(trip):
+        raise RequestRefused("closed")
+    text = (body or "").strip()
+    if kind == CustomerRequest.Kind.CHANGE and not text:
+        raise RequestRefused("blank")
+    if len(text) > ASK_MAX_LENGTH:
+        raise RequestRefused("too_long")
+    chosen = set(topics) if kind == CustomerRequest.Kind.CHANGE else set()
+    topics = [topic for topic in CHANGE_TOPICS if topic in chosen]
+    if kind == CustomerRequest.Kind.CANCEL:
+        reason = reason if reason in CANCEL_REASONS else "Other"
+    else:
+        reason = ""
+    composed = _composed(trip, kind, topics, reason, text)
+    with transaction.atomic():
+        # Serialise one account's submissions, so a double tap can't slip two rows past
+        # the duplicate check or the limit.
+        CustomerAccount.objects.select_for_update().filter(pk=account.pk).first()
+        now = timezone.now()
+        duplicate = (
+            account.requests.filter(
+                reservation=trip,
+                message__body=composed,
+                created_at__gte=now - ASK_DUPLICATE_WINDOW,
+            )
+            .order_by("-created_at", "-pk")
+            .first()
+        )
+        if duplicate is not None:
+            return duplicate
+        if account.requests.filter(created_at__gte=now - ASK_WINDOW).count() >= ASK_LIMIT:
+            raise RequestRefused("limited")
+        message = messaging.record_inbound(
+            messaging.conversation_for(account.contact),
+            channel=Message.Channel.PORTAL,
+            body=composed,
+            sender_name=account.contact.name,
+        )
+        task = tasks.open_request_task(trip.lead, _TASK_KIND[kind])
+        return CustomerRequest.objects.create(
+            account=account,
+            reservation=trip,
+            kind=kind,
+            topics=", ".join(topics),
+            reason=reason,
+            message=message,
+            task=task,
+        )
+
+
+def pending(account: CustomerAccount, trip: Reservation) -> list[dict]:
+    """The account's requests about `trip` whose task is still open, newest first, as
+    `{"kind", "date"}` (the day it was sent in the trip's zone, "Nov 20"). One query."""
+    rows = (
+        account.requests.filter(reservation=trip, task__status__in=Task.UNRESOLVED)
+        .order_by("-created_at", "-pk")
+        .values_list("kind", "created_at")
+    )
+    return [{"kind": kind, "date": _short_day(at, trip)} for kind, at in rows]

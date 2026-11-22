@@ -12,7 +12,7 @@ intake text lands in it too), `Lead.lost_reason`, `Reservation.cancel_reason` an
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -29,7 +29,7 @@ from apps.planners.selectors import _driver as planner_driver
 from apps.public.wedding import format_clock
 from apps.reservations.models import FlightDirection, Reservation, Stop, TripStatusEvent
 
-from . import receipts, selectors
+from . import receipts, requests, selectors
 from .models import CustomerAccount
 
 _S = Reservation.TripStatus
@@ -58,8 +58,6 @@ _POSITION = {
 _SKIPPABLE = frozenset({QUOTE_SENT, DEPOSIT_PAID})
 # Labels that end the line: the steps reached, then the label itself.
 _ENDS = frozenset({"cancelled", "no_show", "closed"})
-# A change or cancellation may be asked for on these (spec §9), before pickup.
-REQUESTABLE = frozenset({"quote_ready", "confirming", "confirmed", "driver_assigned"})
 # Trips still on their way to a driver show where the driver will appear.
 _AWAITING_DRIVER = frozenset(
     {"request_received", "quote_ready", "confirming", "confirmed", "driver_assigned"}
@@ -315,6 +313,52 @@ def _heading(trip: Reservation, row: dict) -> dict:
     return {"heading": day, "heading_zone": "", "when_note": note}
 
 
+def _until_pickup(trip: Reservation) -> str:
+    """ "Your pickup is 12 days away." for the cancel dialog: whole days between today and
+    the pickup day in the trip's own zone, or hours once under two days (a trip with no
+    time stays in days). Blank without a date or once the pickup has passed."""
+    at, now = trip.pickup_at, timezone.now()
+    if at is None or at <= now:
+        return ""
+    left = at - now
+    if trip.pickup_time is not None and left < timedelta(days=2):
+        hours = int(left.total_seconds() // 3600)
+        if hours < 1:
+            return "Your pickup is less than an hour away."
+        return f"Your pickup is {hours} hour{'s' if hours != 1 else ''} away."
+    days = (trip.pickup_date - timezone.localdate(now, timezone=_zone(trip))).days
+    return "Your pickup is tomorrow." if days == 1 else f"Your pickup is {days} days away."
+
+
+def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str) -> dict:
+    """What the change and cancel dialogs need (`can_request`, `ask_when`, `pickup_in`) and
+    the open requests: `pending_request`, the newest (`{"kind", "date"}` or None), and
+    `pending_change` / `pending_cancel`, the date each kind was last asked for while its
+    task is open, so one pending kind never hides the other's button. One query, only
+    while the trip takes requests."""
+    if not requests.can_ask(trip, key):
+        return {
+            "can_request": False,
+            "ask_when": "",
+            "pickup_in": "",
+            "pending_request": None,
+            "pending_change": "",
+            "pending_cancel": "",
+        }
+    open_requests = requests.pending(account, trip)
+    latest: dict[str, str] = {}
+    for row in reversed(open_requests):
+        latest[row["kind"]] = row["date"]
+    return {
+        "can_request": True,
+        "ask_when": f"{requests.when(trip)} · {route}",
+        "pickup_in": _until_pickup(trip),
+        "pending_request": open_requests[0] if open_requests else None,
+        "pending_change": latest.get("change", ""),
+        "pending_cancel": latest.get("cancel", ""),
+    }
+
+
 def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     """The trip page (spec §6.3). `trip` comes from `selectors.trip_or_404(account, pk)`.
 
@@ -324,11 +368,11 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     or None) and `driver_pending` (the line shown in its place, or blank); `notes`;
     `price_lines` (`{"label", "amount", "abs_amount"}`); `total` (None while unpriced); `paid_line`;
     `pay_url` and `pay_label`; `receipt_pending` (waiting for billing to process it);
-    `can_request`; `pending_request` (None: requests arrive later).
+    `can_request` and the rest of `_requests` (the change and cancel dialogs).
 
     At most 30 queries whatever the trip holds: the scoped trip, the row's money, the
     stops, the status history, the deposit, the driver from Dispatched on, and the pay
-    page's ledger reads for a booked order that may owe."""
+    page's ledger reads for a booked order that may owe, and the open requests."""
     # The order's trips: the money split, the pay page and `quote_total` all read them.
     prefetch_related_objects([trip.lead], "reservations")
     paid = selectors.paid_amounts([trip])
@@ -338,7 +382,6 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
     total = row["total"]
     driver = _driver(trip)
     pay_url, pay_label = _pay(trip, key)
-    at = trip.pickup_at
     return {
         **row,
         **_heading(trip, row),
@@ -356,6 +399,5 @@ def trip_detail(account: CustomerAccount, trip: Reservation) -> dict:
         "pay_url": pay_url,
         "pay_label": pay_label,
         "receipt_pending": receipts.awaiting_processing(trip),
-        "can_request": key in REQUESTABLE and (at is None or at > timezone.now()),
-        "pending_request": None,
+        **_requests(account, trip, key, row["route"]),
     }

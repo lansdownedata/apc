@@ -4,8 +4,11 @@
   Trip detail (mockup 3): when and where it stands, the progress line, then the itinerary
   beside the charges. `trip` is the `customers.trip_detail.trip_detail` dict. "Your
   reference" saves in place through `customers:set_reference` (`customerReference()`,
-  static/js/app.js). Not in this release, so not drawn: Book this trip again, Email receipt,
-  and the change and cancel requests. The receipt link joins the charges card's foot.
+  static/js/app.js). Request a change and Request to cancel (mockups 6 and 7) open the
+  shared modal with the form in their <template> (`customerAsk()`; `?ask=change` opens
+  the change one on load); while one is with staff its button reads "Change requested
+  Nov 20". Not in this release, so not drawn: Book this trip again, Email receipt. The
+  receipt link joins the charges card's foot.
 {% endcomment %}
 {% block title %}Trip {{ trip.confirmation_label }}{% endblock %}
 {% block content %}
@@ -40,6 +43,7 @@
   </section>
 
   <div class="mt-5 grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div class="min-w-0 space-y-4">
     <section class="card p-5 sm:p-6" aria-labelledby="itinerary">
       <h2 id="itinerary" class="text-[15px] font-semibold text-ink">Itinerary</h2>
       {% if trip.stops %}
@@ -86,6 +90,24 @@
       </div>
       {% endif %}
     </section>
+
+    {% if trip.can_request %}
+    <div class="flex flex-wrap gap-2" x-data="customerAsk()">
+      {% if trip.pending_change %}
+      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Change requested {{ trip.pending_change }}</span>
+      {% else %}
+      <button type="button" @click="open('change')" class="inline-flex h-10 items-center rounded-lg border border-line bg-surface px-4 text-[13.5px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold">Request a change</button>
+      <template id="ask-change" data-url="{% url 'customers:ask_change' trip.pk %}" data-title="Request a change" data-confirm="Send request" data-cancel="Keep trip as is" data-variant="gold">{% include "customers/_request_change.html" %}</template>
+      {% endif %}
+      {% if trip.pending_cancel %}
+      <span class="inline-flex h-10 items-center gap-1.5 rounded-lg bg-surface2 px-4 text-[13px] font-semibold text-muted">{% icon "check" class="h-4 w-4" %}Cancellation requested {{ trip.pending_cancel }}</span>
+      {% else %}
+      <button type="button" @click="open('cancel')" class="inline-flex h-10 items-center rounded-lg border border-line bg-surface px-4 text-[13.5px] font-semibold text-rose-700 transition-colors hover:bg-surface2 focus-gold">Request to cancel</button>
+      <template id="ask-cancel" data-url="{% url 'customers:ask_cancel' trip.pk %}" data-title="Request to cancel" data-confirm="Send cancellation request" data-cancel="Keep my trip" data-variant="danger">{% include "customers/_request_cancel.html" %}</template>
+      {% endif %}
+    </div>
+    {% endif %}
+    </div>
 
     <section class="card p-5 sm:p-6" aria-labelledby="charges">
       <h2 id="charges" class="text-[15px] font-semibold text-ink">Charges</h2>

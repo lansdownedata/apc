@@ -335,8 +335,62 @@ def trip(request: HttpRequest, pk: int) -> HttpResponse:
         {
             "trip": trip_detail.trip_detail(request.customer, found),
             "reference_url": reverse("customers:set_reference"),
+            "change_topics": requests.CHANGE_TOPICS,
+            "cancel_reasons": [(reason, reason) for reason in requests.CANCEL_REASONS],
         },
     )
+
+
+def _ask_error(reason: str) -> str:
+    """What the dialog says when `requests.ask` refuses, above what the customer typed."""
+    dispatch = dispatch_phone()["display"]
+    return {
+        "blank": "Tell us what needs to change, then send it.",
+        "too_long": f"Please keep it under {requests.ASK_MAX_LENGTH:,} characters.",
+        "limited": "You've sent a lot of requests in the last hour. "
+        f"Please call dispatch at {dispatch}.",
+        "closed": f"This trip can't take requests online any more. Please call dispatch at "
+        f"{dispatch}.",
+    }[reason]
+
+
+# The toast on the trip page once a request is sent.
+_ASK_SENT = {
+    "change": "Request sent. We'll confirm the change with you.",
+    "cancel": "Request sent. We'll confirm the cancellation by email.",
+}
+
+
+def _ask(request: HttpRequest, pk: int, kind: str) -> JsonResponse:
+    """Mockups 6 and 7: the dialog posts here with `fetch` and reloads the trip page on
+    `{"ok": true}`, which shows the toast and the pending state. A refusal answers 400
+    with the sentence to show inside the dialog. Outside the account's scope: 404."""
+    found = selectors.trip_or_404(request.customer, pk)
+    try:
+        requests.ask(
+            request.customer,
+            found,
+            kind=kind,
+            topics=request.POST.getlist("topics"),
+            reason=request.POST.get("reason", ""),
+            body=request.POST.get("body", ""),
+        )
+    except requests.RequestRefused as exc:
+        return JsonResponse({"ok": False, "error": _ask_error(exc.reason)}, status=400)
+    messages.success(request, _ASK_SENT[kind])
+    return JsonResponse({"ok": True})
+
+
+@customer_required
+@require_POST
+def ask_change(request: HttpRequest, pk: int) -> JsonResponse:
+    return _ask(request, pk, "change")
+
+
+@customer_required
+@require_POST
+def ask_cancel(request: HttpRequest, pk: int) -> JsonResponse:
+    return _ask(request, pk, "cancel")
 
 
 @customer_required

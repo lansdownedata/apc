@@ -481,16 +481,15 @@ def test_request_buttons_absent_once_trip_has_started(account, client_as, make_t
     upcoming = _booked(account, make_trip, days=10)
     client = client_as(account)
 
-    for trip in (started, upcoming):
-        body = _body(client, trip)
-        for text in (
-            "Request a change",
-            "Request to cancel",
-            "Book this trip again",
-            "Email receipt",
-            "Download receipt",
-        ):
-            assert text not in body
+    later = ("Book this trip again", "Email receipt", "Download receipt")
+    asks = ("Request a change", "Request to cancel")
+    started_body, upcoming_body = _body(client, started), _body(client, upcoming)
+    for text in (*later, *asks):
+        assert text not in started_body
+    for text in later:
+        assert text not in upcoming_body
+    for text in asks:
+        assert text in upcoming_body
 
 
 # --- rendering -----------------------------------------------------------------------------

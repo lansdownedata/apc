@@ -37,6 +37,7 @@
     {% if next_url %}
     <div class="mt-5 flex flex-wrap gap-2">
       <a href="{{ next_url }}" class="inline-flex h-9 items-center rounded-lg bg-onyx px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 focus-gold">View trip</a>
+      {% if next_trip.can_ask_change %}<a href="{{ next_url }}?ask=change" class="inline-flex h-9 items-center rounded-lg border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold">Request a change</a>{% endif %}
     </div>
     {% endif %}
   </section>

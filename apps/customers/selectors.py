@@ -494,7 +494,11 @@ def home(account: CustomerAccount) -> dict:
     pay) or money owed (Pay now), soonest first. `upcoming`: every upcoming trip but quotes
     (they wait above), requests included, soonest first. `history_banner`: the past-trip
     count, only before the account's first Home visit (the view stamps
-    `history_banner_seen_at` on it). `has_trips`: whether the account has any trip at all."""
+    `history_banner_seen_at` on it). `has_trips`: whether the account has any trip at all.
+    The next trip's `can_ask_change`: it takes a change request (`requests.can_ask`) and
+    none of the account's is waiting on staff (one query, only then)."""
+    from .requests import can_ask, pending
+
     trips = sorted(visible_trips(account), key=_soonest)
     keys = {t.pk: label_key(t) for t in trips}
     by_lead: dict[int, list[Reservation]] = defaultdict(list)
@@ -539,7 +543,13 @@ def home(account: CustomerAccount) -> dict:
     return {
         "next_trip": None
         if nxt is None
-        else {**rows[nxt.pk], "long_date": _long_date(nxt), "summary": _summary(nxt)},
+        else {
+            **rows[nxt.pk],
+            "long_date": _long_date(nxt),
+            "summary": _summary(nxt),
+            "can_ask_change": can_ask(nxt, keys[nxt.pk])
+            and not any(row["kind"] == "change" for row in pending(account, nxt)),
+        },
         "waiting": [
             _waiting_row(rows[group[0].pk], lead, group, owing.get(lead.pk))
             for lead, group in waiting
