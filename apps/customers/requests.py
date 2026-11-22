@@ -254,8 +254,12 @@ ASK_MAX_LENGTH = 2000
 # The same words from the same account about the same trip inside this window are a
 # double tap on Send, not a second request.
 ASK_DUPLICATE_WINDOW = timedelta(seconds=30)
-# A change or cancellation may be asked for on these labels (`selectors.LABELS`).
-ASKABLE = frozenset({"quote_ready", "confirming", "confirmed", "driver_assigned"})
+# A change or cancellation may be asked for on these labels (`selectors.LABELS`): booked
+# trips only. The request's task opens on the order, and the task cron retires every task
+# on an order that is not booked (`tasks.jobs._sweep`), so it would be lost.
+ASKABLE = frozenset({"confirmed", "driver_assigned"})
+# Before booking these call dispatch instead (`trip_detail`, "Need to change or cancel this?").
+CALL_TO_ASK = frozenset({"quote_ready", "confirming"})
 _TASK_KIND = {
     CustomerRequest.Kind.CHANGE: "customer_change_request",
     CustomerRequest.Kind.CANCEL: "customer_cancel_request",
@@ -263,9 +267,9 @@ _TASK_KIND = {
 
 
 def can_ask(trip: Reservation, key: str | None = None) -> bool:
-    """Whether the trip takes a change or cancellation request: Quote ready, Confirming,
-    Confirmed or Driver assigned, and its pickup (in the trip's own zone) still ahead. A
-    trip with no date yet counts as ahead. `key` is `selectors.label_key(trip)` when the
+    """Whether the trip takes a change or cancellation request: Confirmed or Driver
+    assigned, and its pickup (in the trip's own zone) still ahead. A trip with no date yet
+    counts as ahead. `key` is `selectors.label_key(trip)` when the
     caller has it."""
     at = trip.pickup_at
     key = label_key(trip) if key is None else key
@@ -324,7 +328,8 @@ def ask(
         raise ValueError(f"unknown request kind {kind!r}")
     if not can_ask(trip):
         raise RequestRefused("closed")
-    text = (body or "").strip()
+    # A browser counts a line break as one character against `maxlength` but sends two.
+    text = (body or "").replace("\r\n", "\n").strip()
     if kind == CustomerRequest.Kind.CHANGE and not text:
         raise RequestRefused("blank")
     if len(text) > ASK_MAX_LENGTH:

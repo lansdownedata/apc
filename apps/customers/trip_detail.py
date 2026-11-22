@@ -331,14 +331,18 @@ def _until_pickup(trip: Reservation) -> str:
 
 
 def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str) -> dict:
-    """What the change and cancel dialogs need (`can_request`, `ask_when`, `pickup_in`) and
+    """What the change and cancel dialogs need (`can_request`, `ask_when`, `pickup_in`),
+    `call_dispatch` (a Quote ready or Confirming trip still ahead: it shows "Need to change
+    or cancel this? Call dispatch" in place of the buttons), and
     the open requests: `pending_request`, the newest (`{"kind", "date"}` or None), and
     `pending_change` / `pending_cancel`, the date each kind was last asked for while its
     task is open, so one pending kind never hides the other's button. One query, only
     while the trip takes requests."""
     if not requests.can_ask(trip, key):
+        at = trip.pickup_at
         return {
             "can_request": False,
+            "call_dispatch": key in requests.CALL_TO_ASK and (at is None or at > timezone.now()),
             "ask_when": "",
             "pickup_in": "",
             "pending_request": None,
@@ -351,6 +355,7 @@ def _requests(account: CustomerAccount, trip: Reservation, key: str, route: str)
         latest[row["kind"]] = row["date"]
     return {
         "can_request": True,
+        "call_dispatch": False,
         "ask_when": f"{requests.when(trip)} · {route}",
         "pickup_in": _until_pickup(trip),
         "pending_request": open_requests[0] if open_requests else None,

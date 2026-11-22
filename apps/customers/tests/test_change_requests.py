@@ -198,6 +198,16 @@ def test_body_over_2000_characters_is_refused(account, booked):
     assert _ask(account, trip, body="x" * 2000).pk
 
 
+def test_a_line_break_counts_as_one_character(account, booked):
+    # A browser counts each line break as one character against maxlength but sends two.
+    body = ("x" * 99 + "\r\n") * 20
+
+    req = _ask(account, booked(), body=body)
+
+    assert "\r" not in req.message.body
+    assert req.message.body.endswith(("x" * 99 + "\n") * 19 + "x" * 99)
+
+
 def test_request_refused_after_pickup_time(account, booked):
     trip = booked(days=1)
     after = trip.pickup_at + timedelta(minutes=1)
@@ -221,8 +231,16 @@ def test_a_trip_under_way_done_or_cancelled_is_closed(account, booked, status):
     assert refused.value.reason == "closed"
 
 
-def test_an_unpriced_request_is_closed(account, make_trip):
-    trip = make_trip(account, lead__status=Lead.Status.NEW, pickup_date=_day(20))
+@pytest.mark.parametrize("status", [Lead.Status.NEW, Lead.Status.QUOTED, Lead.Status.ENGAGED])
+def test_a_trip_not_yet_booked_is_closed(account, make_trip, status):
+    # Request received, Quote ready and Confirming: the task would sit on an unbooked
+    # order, which the task cron retires, so these call dispatch instead.
+    trip = make_trip(
+        account,
+        lead__status=status,
+        lead__quote_expires_at=timezone.now() + timedelta(days=10),
+        pickup_date=_day(20),
+    )
 
     with pytest.raises(RequestRefused) as refused:
         _ask(account, trip)
@@ -551,3 +569,66 @@ def test_the_task_kinds(key, label, make_trip, account):
     trip = make_trip(account, lead__status=Lead.Status.BOOKED, pickup_date=_day(20))
     task_services.ensure_tasks(trip.lead)
     assert not Task.objects.filter(kind=key).exists()
+
+
+# --- unbooked trips call dispatch; booked requests outlive the task cron ----------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "label"), [(Lead.Status.QUOTED, "Quote ready"), (Lead.Status.ENGAGED, "Confirming")]
+)
+def test_a_quote_or_confirming_trip_offers_the_dispatch_line_not_the_buttons(
+    account, client_as, make_trip, status, label
+):
+    from apps.planners.selectors import dispatch_phone
+
+    trip = make_trip(
+        account,
+        lead__status=status,
+        lead__quote_expires_at=timezone.now() + timedelta(days=10),
+        pickup_date=_day(20),
+    )
+    client = client_as(account)
+
+    body = client.get(_url("trip", trip)).content.decode()
+    phone = dispatch_phone()
+    assert label in body
+    assert f'Need to change or cancel this? Call dispatch at <a href="tel:{phone["tel"]}"' in body
+    assert "Request a change" not in body and "Request to cancel" not in body
+    for name in ("ask_change", "ask_cancel"):
+        response = client.post(_url(name, trip), {"body": "x", "reason": "Other"}, **AJAX)
+        assert response.status_code == 400 and "call dispatch" in response.json()["error"]
+    assert not CustomerRequest.objects.exists() and not Message.objects.exists()
+    assert not Task.objects.filter(kind__startswith="customer_").exists()
+
+
+def test_a_booked_trip_shows_no_dispatch_line(account, client_as, booked):
+    body = client_as(account).get(_url("trip", booked())).content.decode()
+
+    assert "Need to change or cancel this?" not in body
+
+
+def test_a_request_on_a_booked_trip_survives_the_task_cron(account, client_as, booked):
+    from apps.tasks.jobs import run_tasks
+
+    trip = booked()
+    change = _ask(account, trip)
+    cancel = _ask(account, trip, kind="cancel", reason="Plans changed", body="")
+
+    run_tasks()
+
+    for req in (change, cancel):
+        req.task.refresh_from_db()
+        assert req.task.status in Task.UNRESOLVED
+    body = client_as(account).get(_url("trip", trip)).content.decode()
+    assert "Change requested" in body and "Cancellation requested" in body
+
+
+@pytest.mark.parametrize("key", ["customer_change_request", "customer_cancel_request"])
+def test_the_kinds_are_on_the_checklist_schedule_beside_the_planners(key):
+    from apps.tasks import schedule
+
+    rows = {row.key: row for row in schedule.ROWS}
+    assert rows[key].group == rows["planner_change_request"].group
+    assert rows[key].anchor == "after it opens"
+    assert schedule.code_default(key, "standard") == (1, "business_days")

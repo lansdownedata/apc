@@ -7,8 +7,9 @@
   static/js/app.js). Request a change and Request to cancel (mockups 6 and 7) open the
   shared modal with the form in their <template> (`customerAsk()`; `?ask=change` opens
   the change one on load); while one is with staff its button reads "Change requested
-  Nov 20". Not in this release, so not drawn: Book this trip again, Email receipt. The
-  receipt link joins the charges card's foot.
+  Nov 20". Booked trips only: a quote or a deposit being confirmed shows the dispatch
+  line instead. Not in this release, so not drawn: Book this trip again, Email receipt.
+  The receipt link joins the charges card's foot.
 {% endcomment %}
 {% block title %}Trip {{ trip.confirmation_label }}{% endblock %}
 {% block content %}
@@ -106,6 +107,8 @@
       <template id="ask-cancel" data-url="{% url 'customers:ask_cancel' trip.pk %}" data-title="Request to cancel" data-confirm="Send cancellation request" data-cancel="Keep my trip" data-variant="danger">{% include "customers/_request_cancel.html" %}</template>
       {% endif %}
     </div>
+    {% elif trip.call_dispatch %}
+    <p class="text-[13px] text-muted">Need to change or cancel this? Call dispatch at <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-goldd focus-gold hover:underline num">{{ dispatch.display }}</a>.</p>
     {% endif %}
     </div>
 
