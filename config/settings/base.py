@@ -100,6 +100,7 @@ TEMPLATES = [
                 "apps.public.context_processors.canonical",
                 "apps.public.context_processors.social_card",
                 "apps.public.context_processors.site_settings",
+                "apps.customers.context_processors.site_customer",
             ],
         },
     },

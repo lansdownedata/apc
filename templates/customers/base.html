@@ -1,9 +1,10 @@
 {% extends "public/base_public.html" %}
 {% load static %}
 {% comment %}
-  The customer portal's shell: the public site's, with a slim header in place of the
-  marketing nav. Logo and the dispatch number always; Home / Trips / Account, Request a
-  trip and Sign out only when signed in (`signed_in`, set by `customers.views._page`).
+  The customer portal's shell: the public site's, with the same header frame (logo, height,
+  width, account corner) and the account's own pages in the middle. Home / Trips / Account,
+  Request a trip and the account menu only when signed in (`signed_in`, set by
+  `customers.views._page`); a signed-out page gets the dispatch number and the way back.
 {% endcomment %}
 {% block meta %}
 <title>{% block title %}Your account{% endblock %} · All Pro Charter</title>
@@ -15,14 +16,14 @@
 {% block header %}
 {% with name=request.resolver_match.url_name %}
 <header class="sticky top-0 z-50 border-b border-line bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75">
-  <div class="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:gap-6 sm:px-6">
+  <div class="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:h-20 sm:px-6 lg:px-8">
     <a href="{% if signed_in %}{% url 'customers:home' %}{% else %}/{% endif %}"
        class="flex shrink-0 items-center gap-2.5 rounded-lg focus-gold" aria-label="All Pro Charter home">
-      <img src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter" class="h-8 w-auto">
+      <img src="{% static 'brand/apc-logo-color.svg' %}" alt="All Pro Charter" class="h-9 w-auto sm:h-11">
       <span class="hidden font-display text-[15px] font-semibold leading-none tracking-tight text-ink sm:block">All Pro Charter</span>
     </a>
     {% if signed_in %}
-    <nav class="hidden items-center gap-5 text-[13.5px] font-medium text-muted sm:flex" aria-label="Your account">
+    <nav class="ml-4 hidden items-center gap-7 text-[13.5px] font-medium text-muted sm:flex" aria-label="Your account">
       <a href="{% url 'customers:home' %}" {% if name == 'home' %}aria-current="page"{% endif %}
          class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'home' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Home</a>
       <a href="{% url 'customers:trips' %}" {% if name == 'trips' or name == 'trip' %}aria-current="page"{% endif %}
@@ -31,20 +32,20 @@
          class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if name == 'account' %}border-gold font-semibold text-ink{% else %}border-transparent{% endif %}">Account</a>
     </nav>
     {% endif %}
-    <a href="tel:{{ dispatch.tel }}" aria-label="Call dispatch, {{ dispatch.display }}"
-       class="ml-auto inline-flex items-center gap-1.5 rounded text-[13px] font-semibold text-ink focus-gold hover:text-goldd">
-      {% icon "phone" class="h-4 w-4 text-goldd" %}<span class="hidden md:inline">Dispatch</span><span class="num {% if signed_in %}hidden sm:inline{% endif %}">{{ dispatch.display }}</span>
-    </a>
-    {% if signed_in %}
-    {% if can_request %}<a href="{% url 'customers:request_trip' %}" class="btn-gold inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[12.5px] font-semibold focus-gold">Request a trip</a>{% endif %}
-    <form method="post" action="{% url 'customers:logout' %}">
-      {% csrf_token %}
-      <button type="submit" aria-label="Sign out"
-              class="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12.5px] font-semibold text-muted transition-colors hover:bg-surface2 hover:text-ink focus-gold">
-        {% icon "logout" class="h-4 w-4 sm:hidden" %}<span class="hidden sm:inline">Sign out</span>
-      </button>
-    </form>
-    {% endif %}
+    <div class="ml-auto flex items-center gap-3 sm:gap-4">
+      <a href="tel:{{ dispatch.tel }}" aria-label="Call dispatch, {{ dispatch.display }}"
+         class="{% if signed_in %}hidden md:inline-flex {% else %}inline-flex {% endif %}items-center gap-2 rounded text-[13px] font-semibold text-ink focus-gold hover:text-goldd">
+        {% icon "phone" class="h-4 w-4 text-goldd" %}
+        <span class="leading-tight"><span class="hidden text-[11px] font-medium text-muted lg:block">Dispatch, 24/7</span><span class="num">{{ dispatch.display }}</span></span>
+      </a>
+      <span class="hidden {% if signed_in %}md:block {% else %}sm:block {% endif %}h-6 w-px bg-line" aria-hidden="true"></span>
+      {% if signed_in %}
+      {% include "customers/_account_menu.html" with who=site_customer where="portal" %}
+      {% if can_request %}<a href="{% url 'customers:request_trip' %}" class="btn-gold inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[13px] font-semibold focus-gold sm:px-5">Request a trip</a>{% endif %}
+      {% else %}
+      <a href="/" class="hidden items-center gap-1.5 rounded text-[13px] font-medium text-muted transition-colors hover:text-ink focus-gold sm:inline-flex">{% icon "arrow-left" class="h-4 w-4" %}Back to website</a>
+      {% endif %}
+    </div>
   </div>
   {% if signed_in %}
   <nav class="flex gap-6 border-t border-line px-4 text-[13.5px] font-medium text-muted sm:hidden" aria-label="Your account">
@@ -60,15 +61,7 @@
 {% endwith %}
 {% endblock %}
 
-{% comment %} A working page, not a marketing one: no schema.org, no Calendly or schedule panel, no marketing footer. {% endcomment %}
+{% comment %} A working page: no schema.org, no Calendly or schedule panel. The website's footer, for one site; with the panel not loaded its "Schedule a call" falls back to the phone number. {% endcomment %}
 {% block schema %}{% endblock %}
 {% block marketing_embeds %}{% endblock %}
-{% block footer %}
-<footer class="border-t border-line bg-surface">
-  <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-5 text-[12px] text-muted sm:px-6">
-    <span>&copy; {% now "Y" %} All Pro Charter</span>
-    <a href="tel:{{ dispatch.tel }}" class="rounded font-semibold text-ink focus-gold hover:text-goldd num">Dispatch {{ dispatch.display }}</a>
-    <a href="/privacy-policy/" class="rounded focus-gold hover:text-ink sm:ml-auto">Privacy</a>
-  </div>
-</footer>
-{% endblock %}
+{% block footer %}{% include "public/_footer.html" with calendly_url="" %}{% endblock %}

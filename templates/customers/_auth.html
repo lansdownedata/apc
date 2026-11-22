@@ -1,19 +1,17 @@
 {% extends "customers/base.html" %}
-{% load static %}
 {% comment %}
-  The centred card every signed-out customer page sits in (mockups 9 and 10): sign in,
-  sign up, check your email, set a password, reset, and a dead link. No header, as in the
-  mockup; the logo sits in the card and the footer keeps the dispatch number. Block: card.
+  The centred card every signed-out customer page sits in: sign in, sign up, check your
+  email, set a password, reset, and a dead link. The shell's header carries the logo, the
+  dispatch number and the way back; the card sits in the middle of the window. Each page's
+  first line carries the top margin it had under the card's old logo, taken back here.
+  Block: card.
 {% endcomment %}
-{% block header %}{% endblock %}
+{% block main_class %}flex flex-1 flex-col justify-center{% endblock %}
 {% block content %}
-<div class="mx-auto w-full max-w-sm px-4 py-12 sm:py-16">
+<div class="mx-auto w-full max-w-sm px-4 py-10 sm:py-14">
   <div class="card p-6 sm:p-8">
-    <a href="/" class="flex items-center justify-center gap-2.5 rounded-lg focus-gold" aria-label="All Pro Charter home">
-      <img src="{% static 'brand/apc-logo-color.svg' %}" alt="" class="h-8 w-auto">
-      <span class="font-display text-[18px] font-semibold leading-none tracking-tight text-ink">All Pro Charter</span>
-    </a>
-    {% block card %}{% endblock %}
+    <div class="-mt-6">{% block card %}{% endblock %}</div>
   </div>
+  <a href="/" class="mt-5 flex items-center justify-center gap-1.5 rounded text-[13px] font-medium text-muted transition-colors hover:text-ink focus-gold sm:hidden">{% icon "arrow-left" class="h-4 w-4" %}Back to website</a>
 </div>
 {% endblock %}

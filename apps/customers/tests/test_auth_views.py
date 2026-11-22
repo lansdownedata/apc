@@ -532,7 +532,7 @@ def test_the_signed_in_shell_has_the_portal_nav(client_as, account, settings):
     assert "(703) 555-0142" in html
     assert 'href="/account/"' in html
     assert reverse("customers:logout") in html
-    assert "Service Area" not in html  # no marketing footer
+    assert "Service Area" in html  # the website's footer: one site
 
 
 @pytest.mark.parametrize(
@@ -603,10 +603,10 @@ def test_a_name_of_nothing_but_control_characters_is_no_name(client, outbound_on
     assert mail.outbox == []
 
 
-def test_public_header_links_to_customer_login(client):
-    html = client.get("/").content.decode()
-    header, _, rest = html.partition("</header>")
-    footer = rest[rest.index("<footer") :]
-    login = f'href="{reverse("customers:login")}"'
-    assert login in header and login in footer
-    assert "Customer login" in header and "Customer login" in footer
+def test_the_footer_sits_at_the_bottom_of_a_short_page(client):
+    """A short page (sign in) fills the window, so the footer never floats mid-page."""
+    html = client.get(reverse("customers:login")).content.decode()
+    body = re.search(r'<body class="([^"]*)"', html).group(1).split()
+    main = re.search(r'<main class="([^"]*)"', html).group(1).split()
+    assert {"flex", "min-h-screen", "flex-col"} <= set(body)
+    assert "flex-1" in main

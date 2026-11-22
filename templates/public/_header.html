@@ -32,11 +32,20 @@ NOT linked here — it is internal-only; staff navigate to it directly.
          class="rounded border-b-2 pb-0.5 focus-gold transition-colors hover:text-ink {% if '/contact/' in request.path %}border-gold text-ink{% else %}border-transparent{% endif %}">Contact</a>
     </nav>
 
+    {% comment %} The account corner, shared with the portal header (customers/base.html): a visitor gets Sign in, a signed-in customer their account menu. On a phone both live at the top of the menu below. {% endcomment %}
     <div class="ml-auto flex items-center gap-3 sm:gap-4">
-      <a href="{% url 'customers:login' %}" class="hidden rounded text-[13px] font-medium text-muted focus-gold transition-colors hover:text-ink lg:block">Customer login</a>
-      {% include "public/_call_cta.html" with class="hidden rounded text-[13px] font-semibold text-ink focus-gold sm:block" %}
+      {% include "public/_call_cta.html" with class="hidden rounded text-[13px] font-semibold text-ink focus-gold transition-colors hover:text-goldd whitespace-nowrap sm:block lg:hidden xl:block" %}
+      <span class="hidden h-6 w-px bg-line sm:block lg:hidden xl:block" aria-hidden="true"></span>
+      {% if site_customer %}
+      <div class="hidden sm:block">{% include "customers/_account_menu.html" with who=site_customer where="site" %}</div>
+      {% else %}
+      <a href="{% url 'customers:login' %}"
+         class="hidden h-10 items-center gap-2 rounded-full border border-line bg-surface px-4 text-[13px] font-semibold text-ink transition-colors hover:bg-surface2 focus-gold sm:inline-flex">
+        {% icon "user" class="h-4 w-4 text-muted" %}Sign in
+      </a>
+      {% endif %}
       <a href="/bookings/"
-         class="btn-gold rounded-full px-4 py-2 text-[13px] font-semibold focus-gold sm:px-5 sm:py-2.5">
+         class="btn-gold inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[13px] font-semibold focus-gold sm:px-5">
         Book Now
       </a>
     </div>
@@ -50,6 +59,28 @@ NOT linked here — it is internal-only; staff navigate to it directly.
   </div>
 
   <nav id="mobile-nav" class="hidden border-t border-line bg-white px-4 py-3 lg:hidden" aria-label="Primary mobile">
+    <div class="mb-2 rounded-2xl border border-line bg-surface2 p-3 sm:hidden">
+      {% if site_customer %}
+      <div class="flex items-center gap-2.5">
+        <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-charcoal text-[11px] font-bold leading-none text-gold">{{ site_customer.initials }}</span>
+        <div class="min-w-0">
+          <p class="truncate text-[14px] font-semibold text-ink">{{ site_customer.name }}</p>
+          <p class="truncate text-[12px] text-muted">{{ site_customer.email }}</p>
+        </div>
+      </div>
+      <div class="mt-3 grid grid-cols-2 gap-2">
+        <a href="{% url 'customers:home' %}" class="inline-flex h-10 items-center justify-center rounded-full border border-line bg-surface text-[13px] font-semibold text-ink focus-gold hover:bg-white">My account</a>
+        <a href="{% url 'customers:trips' %}" class="inline-flex h-10 items-center justify-center rounded-full border border-line bg-surface text-[13px] font-semibold text-ink focus-gold hover:bg-white">Trips</a>
+      </div>
+      {% else %}
+      <p class="text-[13px] font-semibold text-ink">Already a customer?</p>
+      <p class="mt-0.5 text-[12px] text-muted">See your trips and receipts, and request a ride.</p>
+      <div class="mt-3 grid grid-cols-2 gap-2">
+        <a href="{% url 'customers:login' %}" class="inline-flex h-10 items-center justify-center rounded-full border border-line bg-surface text-[13px] font-semibold text-ink focus-gold hover:bg-white">Sign in</a>
+        <a href="{% url 'customers:signup' %}" class="inline-flex h-10 items-center justify-center rounded-full border border-line bg-surface text-[13px] font-semibold text-ink focus-gold hover:bg-white">Create account</a>
+      </div>
+      {% endif %}
+    </div>
     <div class="flex flex-col gap-1 text-[14px] font-medium text-ink">
       <a href="/" {% if request.path == '/' %}aria-current="page"{% endif %}
          class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if request.path == '/' %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Home</a>
@@ -63,7 +94,12 @@ NOT linked here — it is internal-only; staff navigate to it directly.
          class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/about-us/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">About</a>
       <a href="/contact/" {% if '/contact/' in request.path %}aria-current="page"{% endif %}
          class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2 {% if '/contact/' in request.path %}border-l-2 border-gold bg-surface2 font-semibold text-goldd{% endif %}">Contact</a>
-      <a href="{% url 'customers:login' %}" class="rounded-lg px-2 py-2 focus-gold hover:bg-surface2">Customer login</a>
+      {% if site_customer %}
+      <form method="post" action="{% url 'customers:logout' %}" class="sm:hidden">
+        {% csrf_token %}
+        <button type="submit" class="w-full rounded-lg px-2 py-2 text-left text-muted focus-gold hover:bg-surface2">Sign out</button>
+      </form>
+      {% endif %}
     </div>
   </nav>
 </header>

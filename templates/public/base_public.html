@@ -49,9 +49,9 @@
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
   {% block head_extra %}{% endblock %}
 </head>
-<body class="bg-paper text-ink antialiased">
+<body class="flex min-h-screen flex-col bg-paper text-ink antialiased">
   {% block header %}{% include "public/_header.html" %}{% endblock %}
-  <main>{% block content %}{% endblock %}</main>
+  <main class="{% block main_class %}flex-1{% endblock %}">{% block content %}{% endblock %}</main>
   {% block footer %}{% include "public/_footer.html" %}{% endblock %}
   {% block schema %}{% include "public/_schema_org.html" %}{% endblock %}
   {% include "components/modal.html" %}

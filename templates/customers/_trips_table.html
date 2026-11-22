@@ -46,17 +46,17 @@
     <table data-rows="table" class="hidden w-full border-collapse text-left md:table">
       <thead>
         <tr class="text-[12px] font-semibold text-muted">
-          <th scope="col" class="sticky top-14 z-10 w-12 border-b border-line bg-surface py-2.5 pl-6 pr-2">
+          <th scope="col" class="sticky top-20 z-10 w-12 border-b border-line bg-surface py-2.5 pl-6 pr-2">
             <input type="checkbox" :checked="allPicked" x-effect="$el.indeterminate = count > 0 && !allPicked"
                    @change="pickAll($event.target.checked)" aria-label="Tick every trip shown"
                    class="h-4 w-4 rounded accent-onyx focus-gold">
           </th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Date</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Trip</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Your reference</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5">Status</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface px-3 py-2.5 text-right">Total</th>
-          <th scope="col" class="sticky top-14 z-10 border-b border-line bg-surface py-2.5 pl-3 pr-6 text-right">Receipt</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface px-3 py-2.5">Date</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface px-3 py-2.5">Trip</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface px-3 py-2.5">Your reference</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface px-3 py-2.5">Status</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface px-3 py-2.5 text-right">Total</th>
+          <th scope="col" class="sticky top-20 z-10 border-b border-line bg-surface py-2.5 pl-3 pr-6 text-right">Receipt</th>
         </tr>
       </thead>
       {% include "customers/_trips_rows.html" %}
