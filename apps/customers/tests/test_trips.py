@@ -439,7 +439,7 @@ def test_trips_query_count_with_50_rows(
     assert cancelled_orders >= 3
     client = client_as(account)
 
-    with django_assert_max_num_queries(BASE_QUERIES + PER_CANCELLED_ORDER * cancelled_orders):
+    with django_assert_max_num_queries(BASE_QUERIES + KEPT_QUERIES):
         response = client.get(TRIPS, {"tab": "all"})
     assert response.status_code == 200
     assert len(pks(response.context)) == 50
@@ -449,9 +449,9 @@ def test_trips_query_count_with_50_rows(
 # Session, account, last seen, the trips with their stops and passengers, the cancelled
 # trips' own charges and the passenger options (measured: 8).
 BASE_QUERIES = 8
-# `trip_money.allocation` per order holding a cancelled trip: two prepaid sums, frozen
-# shares, the order's trips.
-PER_CANCELLED_ORDER = 4
+# `trip_money.allocations` for every order holding a cancelled trip at once: prepaid sums,
+# frozen shares, the orders' trips. Fixed, however many orders were cancelled.
+KEPT_QUERIES = 3
 
 
 # --- Your reference ----------------------------------------------------------------------
@@ -631,3 +631,45 @@ def test_an_imported_trip_reads_conf_and_ours_reads_its_reference(account, clien
 
 def pks_rows(result: dict) -> list[dict]:
     return [row for group in result["groups"] for row in group["rows"]]
+
+
+def _detail_ids(queries, table: str) -> set[int]:
+    """The trip ids the one stops or passengers prefetch among `queries` asked for."""
+    asked = [
+        match.group(1)
+        for q in queries
+        if f"FROM `{table}`" in q["sql"]
+        and (match := re.search(r"`reservation_id` IN \(([\d, ]+)\)", q["sql"]))
+    ]
+    assert len(asked) == 1, asked
+    return {int(pk) for pk in asked[0].split(",")}
+
+
+def test_a_long_history_loads_details_for_the_rows_shown_only(
+    account, make_trip, monkeypatch, django_assert_num_queries
+):
+    monkeypatch.setattr(selectors, "PAGE_SIZE", 5)
+    for i in range(12):
+        _done(account, make_trip, _day(-10 - i))
+
+    # The trips, their stops, their passengers, the passenger options.
+    with django_assert_num_queries(4) as captured:
+        result = _trips(account, tab="past")
+
+    assert result["count"] == 12
+    shown = set(pks(result))
+    assert len(shown) == 5
+    assert _detail_ids(captured.captured_queries, "reservations_stop") == shown
+    assert _detail_ids(captured.captured_queries, "reservations_passenger") == shown
+
+
+def test_grouping_by_passenger_still_orders_the_whole_set(account, make_trip, monkeypatch):
+    monkeypatch.setattr(selectors, "PAGE_SIZE", 2)
+    for i, name in enumerate(["Zed Young", "Amy Abel", "Mia Moss", "Amy Abel"]):
+        trip = _done(account, make_trip, _day(-10 - i))
+        PassengerFactory(reservation=trip, name=name, is_lead=True)
+
+    result = _trips(account, tab="past", group="passenger")
+
+    assert [g["title"] for g in result["groups"]] == ["Amy Abel"]
+    assert [row["passenger"] for row in pks_rows(result)] == ["Amy Abel", "Amy Abel"]

@@ -453,9 +453,9 @@ def test_cancelled_rows_cost_a_fixed_number_of_queries_per_order(
         status=Charge.Status.SUCCEEDED,
     )
 
-    # 3 for the rows, 1 for every cancelled trip's own charges, and per order that has a
-    # cancelled trip one allocation: its two prepaid sums, frozen shares, sibling trips.
-    with django_assert_num_queries(3 + 1 + 2 * 4):
+    # 3 for the rows, 1 for every cancelled trip's own charges, and 3 for the allocation of
+    # every order holding one (prepaid sums, frozen shares, sibling trips), all at once.
+    with django_assert_num_queries(3 + 1 + 3):
         rows = selectors.trip_rows(selectors.visible_trips(account))
     totals = {r["pk"]: r["total"] for r in rows}
     for trip in [*a, charged, refunded]:
@@ -469,9 +469,11 @@ def test_cancelled_rows_cost_a_fixed_number_of_queries_per_order(
     ]
 
     a += [_cancelled(first, days=5), _cancelled(first, S.CANCELLED, days=6)]
-    with django_assert_num_queries(3 + 1 + 2 * 4):
+    third, _ = _order_with_money(account, "300.00")
+    _cancelled(third, days=1)
+    with django_assert_num_queries(3 + 1 + 3):
         rows = selectors.trip_rows(selectors.visible_trips(account))
-    assert len(rows) == 5 + 4 + 2 + 2
+    assert len(rows) == 5 + 4 + 2 + 2 + 1
 
 
 # --- totals --------------------------------------------------------------------------------

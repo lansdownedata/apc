@@ -85,12 +85,15 @@ def _wedding_trips() -> QuerySet[Reservation]:
     )
 
 
-def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
-    """Trips on leads the account's contact booked or is billed for. Never a wedding order
-    (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
-    (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
-    have their own portals. Stops (with airports) and passengers are prefetched, and the
-    trip review joined, so `trip_row` costs nothing per row."""
+_DETAILS = (
+    Prefetch("stops", queryset=Stop.objects.select_related("airport").order_by("sequence", "pk")),
+    Prefetch("named_passengers", queryset=Passenger.objects.order_by("sort", "pk")),
+)
+
+
+def _scope(account: CustomerAccount) -> QuerySet[Reservation]:
+    """`visible_trips` without its stops and passengers: what a page reads to sort, count
+    and total a whole history, before `_load_details` on the few rows it shows."""
     contact_id = account.contact_id
     return (
         Reservation.objects.filter(
@@ -99,13 +102,22 @@ def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
         .exclude(Exists(_wedding_trips().filter(lead_id=OuterRef("lead_id"))))
         .exclude(lead__contact__company__is_affiliate_account=True)
         .select_related("lead", "lead__payment", "vehicle", "review")
-        .prefetch_related(
-            Prefetch(
-                "stops", queryset=Stop.objects.select_related("airport").order_by("sequence", "pk")
-            ),
-            Prefetch("named_passengers", queryset=Passenger.objects.order_by("sort", "pk")),
-        )
     )
+
+
+def visible_trips(account: CustomerAccount) -> QuerySet[Reservation]:
+    """Trips on leads the account's contact booked or is billed for. Never a wedding order
+    (`Lead.is_wedding`: any of its trips is a wedding trip) or a farm-in
+    (`Lead.is_farm_in`: the booking contact's company is an affiliate account) — those
+    have their own portals. Stops (with airports) and passengers are prefetched, and the
+    trip review joined, so `trip_row` costs nothing per row."""
+    return _scope(account).prefetch_related(*_DETAILS)
+
+
+def _load_details(trips: Iterable[Reservation]) -> None:
+    """Stops and passengers for trips read through `_scope`, in two queries: a page over a
+    long history loads them for the rows it shows, not for every trip it counted."""
+    prefetch_related_objects(list(trips), *_DETAILS)
 
 
 def trip_or_404(account: CustomerAccount, pk: int) -> Reservation:
@@ -151,14 +163,15 @@ def bucket(trip: Reservation) -> str:
 
 def paid_amounts(trips: list[Reservation]) -> dict[int, Decimal]:
     """What the customer has paid for each priced trip: the sum
-    `trip_money.money_for(trip).allocated` makes, read with one `allocation` per order and
-    one charge query for all the trips, never a set of queries per trip."""
+    `trip_money.money_for(trip).allocated` makes, in four queries however many trips and
+    orders there are: `trip_money.allocations` for every order at once (three) and one
+    charge query for all the trips."""
     priced = [t for t in trips if receipts.priced(t)]
     if not priced:
         return {}
     shares: dict[int, Decimal] = {}
-    for lead in {t.lead_id: t.lead for t in priced}.values():
-        shares.update(trip_money.allocation(lead))
+    for order in trip_money.allocations({t.lead_id: t.lead for t in priced}.values()).values():
+        shares.update(order)
     charged: defaultdict[int, Decimal] = defaultdict(Decimal)
     refunded: defaultdict[int, Decimal] = defaultdict(Decimal)
     own = (
@@ -251,7 +264,7 @@ def _passenger(trip: Reservation) -> str:
 def trip_rows(trips: Iterable[Reservation], paid: dict[int, Decimal] | None = None) -> list[dict]:
     """The rows for a list of trips. Lists call this, not `trip_row` in a loop: cancelled
     trips' kept amounts are read for the whole list at once. Over `visible_trips` that is
-    3 queries, plus 1 when any trip is cancelled and 2 to 4 per order holding one."""
+    3 queries, plus 4 when any trip is cancelled, whatever the number of orders."""
     trips = list(trips)
     kept = _kept(trips, paid)
     return [_row(trip, kept) for trip in trips]
@@ -505,7 +518,7 @@ def home(account: CustomerAccount) -> dict:
     none of the account's is waiting on staff (one query, only then)."""
     from .requests import can_ask, pending
 
-    trips = sorted(visible_trips(account), key=_soonest)
+    trips = sorted(_scope(account), key=_soonest)
     keys = {t.pk: label_key(t) for t in trips}
     by_lead: dict[int, list[Reservation]] = defaultdict(list)
     for trip in trips:
@@ -542,6 +555,7 @@ def home(account: CustomerAccount) -> dict:
     upcoming = [t for t in trips if _on_upcoming(keys[t.pk])]
 
     shown = {t.pk: t for t in upcoming} | {group[0].pk: group[0] for _, group in waiting}
+    _load_details(shown.values())
     rows = dict(zip(shown, trip_rows(shown.values()), strict=True))
     held = _deposits_held([t for t in upcoming if keys[t.pk] == "confirming"])
     nxt = next((t for t in upcoming if _is_next(t, keys[t.pk])), None)
@@ -760,12 +774,14 @@ def trips(account: CustomerAccount, f: TripFilter) -> dict:
     Completed and Cancelled rows, the whole set and not only the rows shown, with `counted`
     the number of those rows. `passengers`: the passenger filter's options.
 
-    The filtered set is read once with its stops and passengers; tab, order, total and
-    rows are worked out from it. The kept amounts of cancelled trips are read once for the
-    whole set (`_kept`: a few queries per order holding one), never per row."""
-    found = list(_matching(visible_trips(account), f))
+    The filtered set is read once without stops or passengers; tab, order and total are
+    worked out from it, and only the rows shown load theirs (`_load_details`), so a long
+    history costs one lean read however far back it goes. The kept amounts of cancelled
+    trips are read once for the whole set (`_kept`: four queries when any trip is
+    cancelled), never per row."""
+    found = list(_matching(_scope(account), f))
     keys = {t.pk: label_key(t) for t in found}
-    has_trips = bool(found) or (f.narrowed and visible_trips(account).exists())
+    has_trips = bool(found) or (f.narrowed and _scope(account).exists())
     if f.tab != "all":
         found = [t for t in found if _bucket_for(keys[t.pk]) == f.tab]
 
@@ -776,10 +792,14 @@ def trips(account: CustomerAccount, f: TripFilter) -> dict:
     )
 
     ordered = _in_tab_order(found, f.tab)
+    if f.group == "passenger":
+        _load_details(ordered)  # the headings are the passengers' names
     titles = {t.pk: _group_title(t, f.group) for t in ordered}
     if f.group != "month":
         ordered.sort(key=lambda t: (not titles[t.pk], titles[t.pk].casefold()))
     shown = ordered[: PAGE_SIZE * f.page]
+    if f.group != "passenger":
+        _load_details(shown)
     label, text = _range_texts(f)
     return {
         "groups": _grouped(shown, [_row(t, kept) for t in shown], titles, f.group),

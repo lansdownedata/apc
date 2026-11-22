@@ -235,24 +235,23 @@ def test_trips_page_offers_both_export_buttons(account, client_as, make_trip):
     assert 'href="/account/trips/export.csv?tab=all&amp;start=2020-01-01"' in html
 
 
-# Session, account, last seen, the trips with their stops and passengers, the charges (7);
-# then `trip_money.allocation` per order: two prepaid sums, frozen shares, the order's trips.
-# Measured 27 for 60 trips on 5 orders: it grows with orders, never with trips.
-BASE_QUERIES = 7
-PER_ORDER = 4
+# Session, account, last seen, the trips with their stops and passengers, the trips' own
+# charges (7); then `trip_money.allocations` for every order at once: prepaid sums, frozen
+# shares, the orders' trips (3). Fixed: it grows with neither trips nor orders.
+EXPORT_QUERIES = 10
 
 
 def test_export_query_count_with_60_rows(
     account, client_as, make_trip, django_assert_max_num_queries
 ):
-    leads = [LeadFactory(contact=account.contact, status=Lead.Status.BOOKED) for _ in range(5)]
+    leads = [LeadFactory(contact=account.contact, status=Lead.Status.BOOKED) for _ in range(20)]
     for lead in leads:
         PaymentPlanFactory(lead=lead, quote_total=Decimal("500.00"))
     for i in range(60):
-        trip = _booked(account, make_trip, days=10 + i, lead=leads[i % 5])
+        trip = _booked(account, make_trip, days=10 + i, lead=leads[i % 20])
         PassengerFactory(reservation=trip, is_lead=True)
     client = client_as(account)
-    with django_assert_max_num_queries(BASE_QUERIES + PER_ORDER * 5):
+    with django_assert_max_num_queries(EXPORT_QUERIES):
         response = client.get(URL, {"tab": "all"})
     rows = _rows(response.content.decode("utf-8-sig"))[1:]
     assert sum(1 for row in rows if row[0]) == 60  # the leads' own undated trips are extra

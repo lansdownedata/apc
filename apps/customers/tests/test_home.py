@@ -398,3 +398,35 @@ def test_only_the_soonest_orders_that_may_owe_are_priced(
     assert selectors.WAITING_PAY_CHECKS == 5
     assert {call.args[0].pk for call in pay_state.call_args_list} == soonest
     assert {row["lead"] for row in response.context["waiting"]} == soonest
+
+
+def test_home_loads_stops_for_the_rows_it_shows_not_the_history(
+    account, make_trip, django_assert_max_num_queries
+):
+    today = timezone.localdate()
+    past = [
+        make_trip(
+            account,
+            lead__status=Lead.Status.BOOKED,
+            trip_status=Reservation.TripStatus.DONE,
+            pickup_date=today - timedelta(days=10 + i),
+        )
+        for i in range(8)
+    ]
+    ahead = make_trip(
+        account,
+        lead__status=Lead.Status.BOOKED,
+        trip_status=Reservation.TripStatus.UNASSIGNED,
+        pickup_date=today + timedelta(days=5),
+        pickup_time=time(9, 0),
+    )
+
+    with django_assert_max_num_queries(12) as captured:
+        data = selectors.home(account)
+
+    assert data["next_trip"]["pk"] == ahead.pk
+    reads = [q["sql"] for q in captured.captured_queries if "FROM `reservations_stop`" in q["sql"]]
+    assert reads
+    asked = {int(pk) for sql in reads for pk in re.findall(r"\d+", sql.split(" IN (")[1])}
+    assert ahead.pk in asked
+    assert asked.isdisjoint(trip.pk for trip in past)

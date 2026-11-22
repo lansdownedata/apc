@@ -661,8 +661,8 @@ def test_has_receipt_rows_cost_no_query_per_row(
         _cancel(trip)
     client = client_as(account)
 
-    # As the Trips page's own budget: 8, plus 4 per order holding a cancelled trip.
-    with django_assert_max_num_queries(8 + 4 * 3):
+    # As the Trips page's own budget: 8, plus 3 once any trip is cancelled.
+    with django_assert_max_num_queries(8 + 3):
         response = client.get("/account/trips/", {"tab": "past"})
     rows = [row for group in response.context["groups"] for row in group["rows"]]
     assert len(rows) == 8
