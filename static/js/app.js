@@ -5409,6 +5409,13 @@ window.contactPicker = contactPicker;
 const WEDDING_STEPS = ["date", "venue", "who", "hotels", "times", "review", "contact"];
 /* The categories an answer can be edited under — the steps minus review and contact. */
 const WEDDING_CATEGORIES = ["date", "venue", "who", "hotels", "times"];
+/* What a gated step needs, shown under Continue once it is pressed without it. */
+const WEDDING_STEP_MESSAGES = {
+  date: "Pick your wedding date to continue.",
+  venue: "Choose your venue, or type its name.",
+  who: "Pick at least one group to continue.",
+  hotels: "Add a hotel, or choose “We haven't booked hotels yet.”",
+};
 /* Tabler icon inner-markup (outline, stroke-width 2), matched to `static/icons/`.
  * The template supplies the <svg> wrapper (h-[22px] w-[22px], currentColor). */
 const WEDDING_GROUPS = [
@@ -5445,6 +5452,8 @@ function weddingPlanner(opts = {}) {
     portal: !!opts.portal,
 
     step: 0,
+    // Steps where Continue was pressed unanswered; see stepError.
+    attempted: {},
     date: (saved && saved.wedding_date) || "",
     venue: (saved && saved.venue) || null,
     venueName: (saved && saved.venue_name) || "",
@@ -5486,6 +5495,7 @@ function weddingPlanner(opts = {}) {
     init() {
       // The office has no steps, so no history to keep and no draft to restore.
       if (this.portal) return;
+      this.fv = publicForm(this.$root);
       // A customer's resume link drops straight onto the review of what they told us. A
       // brand-new visit rehydrates whatever a previous, abandoned visit had entered.
       if (this.resumed) this.step = WEDDING_STEPS.indexOf("review");
@@ -5586,6 +5596,15 @@ function weddingPlanner(opts = {}) {
       }
     },
 
+    /* Why Continue did nothing. Empty until it is pressed on an unanswered step, and
+     * empty again the moment the step is answered. Contact's fields speak for themselves
+     * (publicForm), so it has no entry here. */
+    get stepError() {
+      const name = this.stepName;
+      if (!this.attempted[name] || this.canAdvance()) return "";
+      return WEDDING_STEP_MESSAGES[name] || "";
+    },
+
     /* The one place `step` moves. next(), the on-page Back button, and the browser's
      * Back button all land here; `push` writes a history entry (a forward move),
      * popstate replays one that already exists (APC-5 / A2). */
@@ -5600,7 +5619,10 @@ function weddingPlanner(opts = {}) {
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
     next() {
-      if (!this.canAdvance()) return;
+      if (!this.canAdvance()) {
+        this.attempted[this.stepName] = true;
+        return;
+      }
       let i = this.step + 1;
       while (i < WEDDING_STEPS.length && !this.visibleSteps.includes(WEDDING_STEPS[i])) i++;
       this._goto(Math.min(i, WEDDING_STEPS.length - 1));
@@ -5780,7 +5802,11 @@ function weddingPlanner(opts = {}) {
     },
     get riderTotal() { return this.riderGroups.reduce((sum, g) => sum + g.count, 0); },
     onSubmit(e) {
-      if (!this.canAdvance()) { e.preventDefault(); return; }
+      // Only the contact step posts. Enter in an earlier step's input must not check
+      // (and paint) contact fields the visitor has not reached yet.
+      if (this.stepName !== "contact") { e.preventDefault(); return; }
+      const contact = this.$root.querySelectorAll("#wp-name, #wp-email");
+      if (!this.fv.check([...contact])) { e.preventDefault(); return; }
       this.track("contact", "completed");
       this.submitting = true;
       // The details are being sent — drop the local draft so returning to

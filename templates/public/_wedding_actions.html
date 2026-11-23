@@ -2,6 +2,8 @@
   The Back / Continue pair every mid-flow step ends with. Requires an enclosing
   `weddingPlanner()` scope. The first step (no Back) and the last (submit) write their own.
 {% endcomment %}
+{% comment %} Why Continue did nothing: shown once it is pressed with the step unanswered, gone the moment it is answered. {% endcomment %}
+<div x-cloak x-show="!portal && stepError" class="mt-4"><p class="fv-msg" role="alert" x-text="stepError"></p></div>
 {% comment %} Hidden in the office's Edit details, which carries one shared footer instead. {% endcomment %}
 <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
   <button type="button" @click="back()"
@@ -9,8 +11,8 @@
     Back
   </button>
   <span class="flex-1"></span>
-  <button type="button" @click="next()" :disabled="!canAdvance()"
-          class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+  <button type="button" @click="next()"
+          class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold">
     Continue
   </button>
   {% include "public/_form_help_cta.html" %}

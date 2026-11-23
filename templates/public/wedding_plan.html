@@ -26,7 +26,7 @@
 <section class="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6 sm:py-14"
          x-data="weddingPlanner({ venuesUrl: '{% url 'public:wedding_venues' %}', resume: {{ resume|json_attr }} })">
 
-  <form method="post" @submit="onSubmit($event)" class="contents">
+  <form data-fv-form novalidate method="post" @submit="onSubmit($event)" class="contents">
     {% csrf_token %}
 
     {% comment %} honeypot — invisible to real visitors, irresistible to bots {% endcomment %}
@@ -104,27 +104,33 @@
         </p>
 
         <div class="mt-6 grid gap-4">
-          <div>
+          <div class="fv">
             <label for="wp-name" class="mb-1.5 block text-[12px] font-medium text-muted">Your name</label>
             <input type="text" id="wp-name" name="name" x-model="contact.name" required
                    autocomplete="name" placeholder="Jane Rider"
-                   class="field{% if form.name.errors %} field-error{% endif %}">
-            {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+                   data-fv data-pristine-required-message="Tell us your name."
+                   {% if form.name.errors %}aria-invalid="true" aria-describedby="error-wp-name"{% endif %}
+                   class="field">
+            {% include "components/field_error.html" with field_id="wp-name" errors=form.name.errors %}
           </div>
           <div class="grid gap-4 sm:grid-cols-2">
-            <div>
+            <div class="fv">
               <label for="wp-email" class="mb-1.5 block text-[12px] font-medium text-muted">Email</label>
               <input type="email" id="wp-email" name="email" x-model="contact.email"
                      required autocomplete="email" placeholder="you@example.com"
-                     class="field{% if form.email.errors %} field-error{% endif %}">
-              {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+                     data-fv data-pristine-required-message="We need your email to send your quote."
+                     data-pristine-email-message="Add the rest of your email, like jane@gmail.com."
+                     {% if form.email.errors %}aria-invalid="true" aria-describedby="error-wp-email"{% endif %}
+                     class="field">
+              {% include "components/field_error.html" with field_id="wp-email" errors=form.email.errors %}
             </div>
-            <div>
+            <div class="fv">
               <label for="wp-phone" class="mb-1.5 block text-[12px] font-medium text-muted">Phone <span class="text-muted/70">(optional)</span></label>
               <input type="tel" id="wp-phone" name="phone" x-model="contact.phone"
                      autocomplete="tel" placeholder="(202) 555-0134"
-                     class="field{% if form.phone.errors %} field-error{% endif %}">
-              {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+                     {% if form.phone.errors %}aria-invalid="true" aria-describedby="error-wp-phone"{% endif %}
+                     class="field">
+              {% include "components/field_error.html" with field_id="wp-phone" errors=form.phone.errors %}
             </div>
           </div>
         </div>
@@ -139,7 +145,7 @@
           <button type="button" @click="back()"
                   class="rounded-full px-5 py-3 text-[13.5px] font-semibold text-muted ring-1 ring-line transition-colors focus-gold hover:bg-surface2 hover:text-ink">Back</button>
           <span class="flex-1"></span>
-          <button type="submit" :disabled="!canAdvance() || submitting"
+          <button type="submit" :disabled="submitting"
                   class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
             <span x-text="submitting ? 'Sending…' : 'Send my details'">Send my details</span>
           </button>

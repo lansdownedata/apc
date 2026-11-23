@@ -218,3 +218,10 @@ def test_a_new_trip_on_a_wedding_starts_on_the_wedding_date_and_occasion(client,
 def test_an_ordinary_lead_gets_no_trip_defaults(client, agent):
     lead = LeadFactory()
     assert client.get(reverse("lead_detail", args=[lead.pk])).context["trip_defaults"] == {}
+
+
+def test_the_office_editor_carries_no_public_validation(client, agent):
+    """Edit details reuses the public step partials; step messages are public-only."""
+    html = _workspace(client, _wedding_lead())
+    assert "data-fv-form" not in html
+    assert 'x-show="!portal && stepError"' in html  # present, never shown in portal mode

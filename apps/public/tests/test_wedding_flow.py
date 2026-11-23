@@ -259,3 +259,23 @@ def test_a_lead_with_no_saved_answers_still_resumes(client):
     lead = Lead.objects.get()
     Lead.objects.filter(pk=lead.pk).update(intake_payload={})
     assert client.get(_resume_url(lead)).status_code == 200
+
+
+# --- browser-side validation contract (spec 2026-11-22-public-form-validation) ---------
+
+
+def test_the_planner_form_is_a_validated_form(client):
+    html = client.get(PLAN_URL).content.decode()
+    assert '<form data-fv-form novalidate method="post" @submit="onSubmit($event)"' in html
+
+
+def test_continue_is_never_silently_disabled(client):
+    html = client.get(PLAN_URL).content.decode()
+    assert ':disabled="!canAdvance()"' not in html
+    assert 'x-text="stepError"' in html
+
+
+def test_a_server_email_error_renders_in_the_shared_slot(client):
+    html = client.post(PLAN_URL, _post(email="jane@gmail")).content.decode()
+    assert '<p class="pristine-error fv-msg" id="error-wp-email" role="alert">' in html
+    assert 'aria-describedby="error-wp-email"' in html

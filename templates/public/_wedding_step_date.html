@@ -38,10 +38,12 @@
     </span>
   </div>
 
+  {% comment %} Why Continue did nothing: shown once it is pressed with the step unanswered, gone the moment it is answered. {% endcomment %}
+  <div x-cloak x-show="!portal && stepError" class="mt-4"><p class="fv-msg" role="alert" x-text="stepError"></p></div>
   {% comment %} The office's Edit details has one shared footer instead — see leads/_wedding_details_editor.html. {% endcomment %}
   <div x-show="!portal" class="mt-7 flex flex-wrap items-center gap-3">
-    <button type="button" @click="next()" :disabled="!canAdvance()"
-            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold disabled:cursor-not-allowed disabled:opacity-60">
+    <button type="button" @click="next()"
+            class="btn-gold focus-gold rounded-full px-6 py-3 text-[14px] font-semibold">
       Continue
     </button>
     {% include "public/_form_help_cta.html" %}
