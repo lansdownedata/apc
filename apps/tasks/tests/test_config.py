@@ -186,7 +186,7 @@ def test_tasks_screen_saves_hold_settings(client):
     assert "On the day of the order&#x27;s first held trip, in the trip&#x27;s local time." in body
     assert "After the order&#x27;s last held trip, at the latest." in body
     assert "Whichever comes first." in body
-    assert 'type="time"' in body
+    assert "data-flatpickr-time" in body
     assert "cleaning_fee" not in body  # the fee is set per vehicle type now
 
     resp = client.post(
