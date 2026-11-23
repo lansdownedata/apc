@@ -4449,8 +4449,13 @@ function phoneIsValid(el) {
 document.addEventListener("submit", (e) => {
   const form = e.target;
   if (!form.querySelectorAll) return;
+  // The public forms show a bad number inline (publicForm, below) and have already
+  // stopped the post; they only need the rewrite, and only when the post goes ahead.
+  const inline = form.hasAttribute("data-fv-form");
+  if (inline && e.defaultPrevented) return;
   form.querySelectorAll("input[data-phone]").forEach((el) => {
     if (!phoneIsValid(el)) {
+      if (inline) return;
       e.preventDefault();
       el.classList.add("field-error");
       Alpine.store("toast").push({
@@ -4467,6 +4472,126 @@ document.addEventListener("submit", (e) => {
 
 document.addEventListener("DOMContentLoaded", () => initPhoneInputs());
 window.initPhoneInputs = initPhoneInputs;
+
+/* ---------------------------------------------- public form validation (2026-11-22)
+ * The three public lead forms (booking request, schedule a call, wedding planner) share
+ * one behaviour over Pristine — docs/superpowers/specs/2026-11-22-public-form-validation-design.md:
+ *   - an error appears only when the visitor leaves a field they have typed in, or
+ *     presses Next / Submit. Typing never adds one;
+ *   - it clears the moment the field is valid again, while they are still typing.
+ * Pristine's own live mode re-validates on every keystroke, so it runs with live OFF and
+ * the timing above is ours, delegated from the form root. A field opts in with `data-fv`
+ * and carries its rules and copy as attributes (required, type="email", min, max,
+ * data-pristine-*-message). Errors land in `.fv-msg` inside the field's `.fv` wrapper —
+ * the same element the server renders through components/field_error.html.
+ */
+const FV_CONFIG = {
+  classTo: "fv",
+  errorClass: "fv-invalid",
+  successClass: "fv-valid",
+  // Must equal classTo: Pristine 1.1.0 dereferences a missing wrapper otherwise.
+  errorTextParent: "fv",
+  errorTextTag: "p",
+  errorTextClass: "fv-msg",
+};
+
+if (window.Pristine) {
+  // `data-pristine-phone` — the intl-tel-input check every phone field already uses.
+  window.Pristine.addValidator(
+    "phone",
+    function () { return phoneIsValid(this); },
+    "That number doesn't look right.",
+    2,
+    false,
+  );
+}
+
+/** flatpickr hides the real input and shows a copy; the copy is what the visitor sees. */
+function fvVisible(el) {
+  return (el && el._flatpickr && el._flatpickr.altInput) || el;
+}
+
+/**
+ * Validation for one public form. `check(fields)` is each form's Next/Submit gate,
+ * `serverError(el, message)` shows a message the server sent back as JSON.
+ * Without Pristine (CDN down) every check passes and the server still validates.
+ */
+function publicForm(root) {
+  if (!window.Pristine) return { check: () => true, serverError() {}, visible: fvVisible };
+  let pristine = null;
+
+  // Built on first use rather than in Alpine's init(): Alpine starts before flatpickr and
+  // intl-tel-input have run, and Pristine collects its fields once, when constructed.
+  function build() {
+    if (pristine) return pristine;
+    root.querySelectorAll("[data-fv]").forEach((el) => {
+      const shown = fvVisible(el);
+      if (shown !== el) {
+        // flatpickr's real input is type=hidden now, which Pristine skips; the rules
+        // move to the copy the visitor actually picks into.
+        for (const attr of Array.from(el.attributes)) {
+          if (attr.name === "required" || attr.name.startsWith("data-pristine-")) {
+            shown.setAttribute(attr.name, attr.value);
+          }
+        }
+      }
+      shown.dataset.fvField = "1";
+    });
+    pristine = new window.Pristine(root, FV_CONFIG, false);
+    return pristine;
+  }
+
+  function fieldFor(target) {
+    const el = fvVisible(target);
+    return el && el.dataset && el.dataset.fvField ? el : null;
+  }
+
+  // Typing (or picking) never adds an error; it only clears one that is now fixed.
+  function onEdit(e) {
+    build();
+    const field = fieldFor(e.target);
+    if (!field) return;
+    field.dataset.fvTyped = "1";
+    if (field.getAttribute("aria-invalid") === "true" && pristine.validate(field, true)) {
+      pristine.validate(field);
+    }
+  }
+
+  // Leaving a field checks it, once the visitor has typed in it.
+  function onLeave(e) {
+    build();
+    const field = fieldFor(e.target);
+    if (field && field.dataset.fvTyped) pristine.validate(field);
+  }
+
+  root.addEventListener("input", onEdit);
+  root.addEventListener("change", onEdit);
+  root.addEventListener("focusout", onLeave);
+
+  return {
+    check(fields) {
+      build();
+      const shown = fields.filter(Boolean).map(fvVisible);
+      const ok = pristine.validate(shown);
+      if (!ok) {
+        const first = shown.find((el) => el.getAttribute("aria-invalid") === "true");
+        if (first) {
+          first.focus({ preventScroll: true });
+          first.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      }
+      return ok;
+    },
+    serverError(el, message) {
+      build();
+      const field = fvVisible(el);
+      field.pristine.errors = [];
+      pristine.addError(field, message);
+    },
+    visible: fvVisible,
+  };
+}
+window.publicForm = publicForm;
 
 /* -------------------------------------------------------- flatpickr auto-init
  * One options object for the whole app: the portal's pickers must read exactly
@@ -5755,6 +5880,9 @@ function scheduleBooking(opts = {}) {
          nothing listening yet — and the button would look simply broken. */
       if (window.__schedulerPending) this.$nextTick(() => this.openPanel());
 
+      // Name / email / phone; the slot and Calendly's own questions stay in `errors`.
+      this.fv = publicForm(this.$root);
+
       this.month = this.monthKey(new Date());
 
       /* The VISITOR's zone, not the company's. Everything on the All Pro Charter side
@@ -6085,16 +6213,13 @@ function scheduleBooking(opts = {}) {
       return window.phoneValue ? window.phoneValue(el) : el.value.trim();
     },
 
-    localErrors(phone) {
+    contactFields() {
+      return [this.$refs.name, this.$refs.email, this.$refs.phone];
+    },
+
+    /** What publicForm cannot see: the chosen slot and Calendly's own questions. */
+    localErrors() {
       const found = {};
-      if (!this.form.name.trim()) found.name = "Tell us your name.";
-      if (!this.form.email.trim() || !this.form.email.includes("@")) {
-        found.email = "We need a valid email for the calendar invite.";
-      }
-      if (!phone) found.phone = "We call you at this number, so we need one.";
-      else if (window.phoneIsValid && !window.phoneIsValid(this.$refs.phone)) {
-        found.phone = "That number doesn't look right.";
-      }
       if (!this.form.start_time) found.start_time = "Pick a time.";
       for (const q of this.visibleQuestions) {
         if (q.required && !String(this.answers[q.position] || "").trim()) {
@@ -6107,13 +6232,15 @@ function scheduleBooking(opts = {}) {
     async submit() {
       if (this.busy) return;
       this.offerPopup = false;
-      const phone = this.phone();
-      const found = this.localErrors(phone);
-      if (Object.keys(found).length) {
+      // Both checks run, so every problem shows at once rather than one per press.
+      const fieldsOk = this.fv.check(this.contactFields());
+      const found = this.localErrors();
+      if (!fieldsOk || Object.keys(found).length) {
         this.errors = found;
         return;
       }
 
+      const phone = this.phone();
       this.errors = {};
       this.busy = true;
       const body = {
@@ -6175,11 +6302,16 @@ function scheduleBooking(opts = {}) {
       }
     },
 
-    /** Server error keys onto field keys; `questions` arrives as a list. */
+    /** Server error keys onto field keys; `questions` arrives as a list. Name, email
+     *  and phone go under their fields through publicForm, the rest into `errors`. */
     serverErrors(errors) {
+      const [name, email, phone] = this.contactFields();
+      const fields = { name, email, phone };
       const mapped = {};
       for (const [key, value] of Object.entries(errors)) {
-        mapped[key] = Array.isArray(value) ? value.join(" ") : value;
+        const message = Array.isArray(value) ? value.join(" ") : value;
+        if (fields[key]) this.fv.serverError(fields[key], message);
+        else mapped[key] = message;
       }
       return mapped;
     },

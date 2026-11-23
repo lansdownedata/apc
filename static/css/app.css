@@ -537,11 +537,16 @@ header, aside, main, .wash-gold {
 /* Header field: the injected .iti wrapper must not stretch the metadata row. */
 .iti:has(> .inline-edit) { width: auto; }
 
-/* Invalid-input state, shared by both phone fields. */
-.field-error {
+/* Invalid-input state: the portal's phone fields (.field-error) and the public forms,
+   where Pristine marks the input itself with aria-invalid (publicForm() in app.js). */
+.field-error,
+.field[aria-invalid="true"] {
   border-color: rgb(var(--danger)) !important;
   box-shadow: 0 0 0 3px rgb(var(--danger) / .18) !important;
 }
+/* The one message style under a public form field — written by Pristine, by the
+   server (components/field_error.html), and by Alpine for step-level messages. */
+.fv-msg { margin-top: .25rem; font-size: 12px; line-height: 1.4; color: rgb(var(--danger)); }
 
 /* ============================================ smart-address autocomplete === */
 .sa-search { position: relative; }

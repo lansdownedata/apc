@@ -15,7 +15,7 @@
   is invalid HTML, the parser hoists it out, and Tom Select then initialises with zero
   options. A zone we do not list is added through Tom Select's own API on open.
 {% endcomment %}
-<div x-data="scheduleBooking({
+<div data-fv-form novalidate x-data="scheduleBooking({
        slotsUrl: '{% url 'public:schedule_slots' %}',
        bookUrl: '{% url 'public:schedule_book' %}'
      })"
@@ -65,29 +65,32 @@
             <h3 class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Your details</h3>
 
             <div class="mt-4 space-y-3.5">
-              <div>
+              <div class="fv">
                 <label for="sched-name" class="mb-1 block text-[12.5px] font-medium text-ink">Name</label>
-                <div><input id="sched-name" type="text" x-model="form.name" autocomplete="name"
-                            class="field" :class="errors.name && 'ring-danger'"></div>
-                <p x-show="errors.name" x-text="errors.name" class="mt-1 text-[12px] text-danger"></p>
+                <div><input id="sched-name" type="text" x-model="form.name" x-ref="name" autocomplete="name"
+                            data-fv required data-pristine-required-message="Tell us your name."
+                            class="field"></div>
               </div>
 
-              <div>
+              <div class="fv">
                 <label for="sched-email" class="mb-1 block text-[12.5px] font-medium text-ink">Email</label>
-                <div><input id="sched-email" type="email" x-model="form.email" autocomplete="email"
-                            class="field" :class="errors.email && 'ring-danger'"></div>
-                <p x-show="errors.email" x-text="errors.email" class="mt-1 text-[12px] text-danger"></p>
+                <div><input id="sched-email" type="email" x-model="form.email" x-ref="email" autocomplete="email"
+                            data-fv required
+                            data-pristine-required-message="We need a valid email for the calendar invite."
+                            data-pristine-email-message="Add the rest of your email, like jane@gmail.com."
+                            class="field"></div>
               </div>
 
-              <div>
+              <div class="fv">
                 <label for="sched-phone" class="mb-1 block text-[12.5px] font-medium text-ink">Phone</label>
                 {% comment %}
                   intlTelInput is auto-initialised by data-phone; app.js reads it back
                   through phoneValue() so what we post is E.164.
                 {% endcomment %}
                 <div><input id="sched-phone" type="tel" data-phone x-ref="phone" autocomplete="tel"
-                            class="field" :class="errors.phone && 'ring-danger'"></div>
-                <p x-show="errors.phone" x-text="errors.phone" class="mt-1 text-[12px] text-danger"></p>
+                            data-fv required data-pristine-phone
+                            data-pristine-required-message="We call you at this number, so we need one."
+                            class="field"></div>
               </div>
 
               {% comment %}
@@ -110,6 +113,7 @@
                   <div>
                     <template x-if="q.kind === 'text'">
                       <textarea :id="'sched-q' + q.position" x-model="answers[q.position]"
+                                :aria-invalid="errors['q' + q.position] ? 'true' : null"
                                 rows="2" class="field"></textarea>
                     </template>
                     {% comment %}
@@ -126,11 +130,12 @@
                     </template>
                     <template x-if="q.kind === 'line'">
                       <input :id="'sched-q' + q.position" type="text"
-                             x-model="answers[q.position]" class="field">
+                             x-model="answers[q.position]"
+                             :aria-invalid="errors['q' + q.position] ? 'true' : null" class="field">
                     </template>
                   </div>
                   <p x-show="errors['q' + q.position]" x-text="errors['q' + q.position]"
-                     class="mt-1 text-[12px] text-danger"></p>
+                     class="fv-msg"></p>
                 </div>
               </template>
 
@@ -263,8 +268,7 @@
               </div>
             </div>
 
-            <p x-show="errors.start_time" x-text="errors.start_time"
-               class="mt-2 text-[12px] text-danger"></p>
+            <p x-show="errors.start_time" x-text="errors.start_time" class="fv-msg"></p>
           </div>
         </div>
 

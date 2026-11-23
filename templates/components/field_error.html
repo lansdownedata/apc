@@ -1,0 +1,10 @@
+{% comment %}
+  A field's server-side error, in the slot the browser-side validation uses
+  (publicForm() in static/js/app.js, over Pristine). Pristine looks for an existing
+  `.pristine-error` inside the field's `.fv` wrapper before creating its own, so the
+  server's message is the same element the browser later clears once the field is
+  fixed: one look, one place. Pair it with aria-invalid="true" and
+  aria-describedby="error-<field_id>" on the input.
+  Params: field_id (the input's id), errors (the form field's errors).
+{% endcomment %}
+{% if errors %}<p class="pristine-error fv-msg" id="error-{{ field_id }}" role="alert">{{ errors.0 }}</p>{% endif %}
