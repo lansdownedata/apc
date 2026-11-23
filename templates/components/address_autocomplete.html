@@ -16,6 +16,9 @@
     lat / lng   — optional; the picked coordinates, re-rendered after a server-side
                   error so the hidden name_lat / name_lng post them again. Callers that
                   pass nothing get blanks, as before
+    fv_message  — optional; makes the address required on a public form, checked by
+                  publicForm() (static/js/app.js) with this message. The caller wraps the
+                  include in a `.fv` element, where the message lands.
 {% endcomment %}
 {% load json_filters %}
 <div class="aac" x-data="addressAutocomplete({ acUrl: '{% url 'public:geocode' %}', value: {{ value|default:''|json_string }}, display: {{ value|default:''|json_string }}, lat: {{ lat|default:''|json_string }}, lng: {{ lng|default:''|json_string }}, fallbackLat: {{ address_bias_center.0|default:'null' }}, fallbackLon: {{ address_bias_center.1|default:'null' }}, airport: {{ airport|default:''|json_string }} })">
@@ -27,6 +30,7 @@
            :aria-activedescendant="active >= 0 ? '{{ field_id }}-opt-' + active : null"
            autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
            placeholder="Search an address…"
+           {% if fv_message %}data-fv data-pristine-required data-pristine-required-message="{{ fv_message }}"{% endif %}
            class="field w-full"
            @input.debounce.250ms="search()" @focus="results.length && (open=true)">
     <div class="sa-drop" id="{{ field_id }}-listbox" role="listbox" x-show="open" x-cloak @click.outside="closeResults()">

@@ -161,3 +161,36 @@ def test_a_booking_without_an_email_is_refused(client):
     response = client.post("/bookings/", {**VALID, "email": ""})
     assert not Lead.objects.exists()
     assert response.status_code in (200, 302)
+
+
+# --- browser-side validation contract (spec 2026-11-22-public-form-validation) ---------
+
+
+def test_booking_form_is_a_validated_form(client):
+    html = client.get("/bookings/").content.decode()
+    assert '<form data-fv-form novalidate method="post" action="/bookings/"' in html
+
+
+def test_booking_rules_are_data_attributes_not_required(client):
+    """No-JS must still post: hours/pickup rules ride on data-pristine-*, not `required`."""
+    html = client.get("/").content.decode()  # the hero: the two-step form
+    hours = html[html.index('id="bw-hours"') - 300 :][:600]
+    assert 'data-pristine-required-message="Enter how many hours you need."' in hours
+    assert " required" not in hours
+    assert 'data-pristine-required-message="Enter a pickup address."' in html
+
+
+def test_the_one_step_form_asks_for_no_trip_fields_the_server_does_not(client):
+    """/bookings/ posts without a pickup or date today; validation must not add a rule."""
+    html = client.get("/bookings/").content.decode()
+    assert "Enter a pickup address." not in html
+    assert "Pick a date." not in html
+    assert 'data-pristine-required-message="How many passengers?"' in html
+
+
+def test_a_server_email_error_renders_in_the_shared_slot(client):
+    resp = client.post("/bookings/", {**VALID, "email": "jane@gmail"})
+    html = resp.content.decode()
+    assert '<p class="pristine-error fv-msg" id="error-bw-email" role="alert">' in html
+    assert 'aria-describedby="error-bw-email"' in html
+    assert "text-[11.5px] text-rose-600" not in html  # the old per-field error style

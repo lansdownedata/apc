@@ -5103,7 +5103,6 @@ function quoteSteps(opts = {}) {
     // On a server-side error re-render, open the step holding the first error.
     // name/email/phone are the only server-required fields, so that is step 2.
     step: opts.twoStep && !opts.hasErrors ? 1 : 2,
-    errors: {},
     // Snapshotted when step 1 is cleared. It cannot be a lazy x-text call: summary()
     // reads field values straight off the DOM, which Alpine's reactivity cannot see,
     // so x-text would only re-run when some *other* reactive prop changed and would
@@ -5116,6 +5115,7 @@ function quoteSteps(opts = {}) {
     // sit under x-show (never removed), so stepping back and forth keeps what was typed,
     // and the browser's bfcache covers a full navigation away and back.
     init() {
+      this.fv = publicForm(this.$root);
       if (!this.twoStep) return;
       this._onPop = (e) => { this.step = (e.state && e.state.quoteStep) || 1; };
       window.addEventListener("popstate", this._onPop);
@@ -5131,43 +5131,37 @@ function quoteSteps(opts = {}) {
       return this.step === 1 ? "Get my quote" : "Send my request";
     },
 
-    // Step-1 gate. Every visible trip field is required; hours only when hourly.
-    // Messages name the fix, not the rule.
-    required() {
-      const req = [
-        ["pickup", "Enter a pickup address"],
-        ["dropoff", "Enter a drop-off address"],
-        ["pickup_date", "Pick a date"],
-        ["pickup_time", "Pick a time"],
-        ["passengers", "How many passengers?"],
-      ];
-      if (this.tripType === "hourly") req.push(["hours", "Enter how many hours you need"]);
-      return req;
+    // $root, never $el: Alpine resolves $el to the element the expression runs on,
+    // which for @click is the button — a button contains no fields, so every lookup
+    // would come back null and the gate would silently pass.
+    fields(...names) {
+      return names.map((name) => this.$root.querySelector(`[name="${name}"]`));
+    },
+
+    // The trip. Each field's rules and copy live on the input; hours only when hourly.
+    stepOneFields() {
+      const names = ["pickup", "dropoff", "pickup_date", "pickup_time", "passengers"];
+      if (this.tripType === "hourly") names.push("hours");
+      return this.fields(...names);
+    },
+
+    stepTwoFields() {
+      return this.fields("name", "email", "phone");
     },
 
     validateStepOne() {
-      this.errors = {};
-      let firstBad = null;
-      for (const [name, message] of this.required()) {
-        // $root, never $el: Alpine resolves $el to the element the expression runs
-        // on, which for @click is the button — and a button contains no fields, so
-        // every lookup would come back null and the gate would silently pass.
-        const el = this.$root.querySelector(`[name="${name}"]`);
-        if (el && !String(el.value || "").trim()) {
-          this.errors[name] = message;
-          if (!firstBad) firstBad = el;
-        }
-      }
-      if (firstBad) {
-        // flatpickr hides the real input behind an altInput sibling; focus that.
-        (firstBad._flatpickr?.altInput || firstBad).focus();
-        return false;
-      }
-      return true;
+      return this.fv.check(this.stepOneFields());
     },
 
     onSubmit(e) {
-      if (!this.twoStep || this.step === 2) return; // let it post
+      if (!this.twoStep || this.step === 2) {
+        // The hero already cleared step 1 on its way here; the one-step form checks it now.
+        const fields = this.twoStep
+          ? this.stepTwoFields()
+          : [...this.stepOneFields(), ...this.stepTwoFields()];
+        if (!this.fv.check(fields)) e.preventDefault();
+        return;
+      }
       e.preventDefault();
       if (!this.validateStepOne()) return;
       this.summaryText = this.summary();

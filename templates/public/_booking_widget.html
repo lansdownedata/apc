@@ -9,7 +9,7 @@
   step state. Omit it (/contact/, /bookings/) and every field renders at once.
 {% endcomment %}
 {% load json_filters %}
-<form method="post" action="{% url 'public:bookings' %}"
+<form data-fv-form novalidate method="post" action="{% url 'public:bookings' %}"
       x-data="quoteSteps({ twoStep: {% if two_step %}true{% else %}false{% endif %}, tripType: {{ form.trip_type.value|default:'transfer'|json_string }}, hasErrors: {% if form.errors %}true{% else %}false{% endif %} })"
       class="quote-form grid gap-x-4 gap-y-3 sm:grid-cols-2">
   {% csrf_token %}
@@ -54,12 +54,19 @@
       </div>
     </div>
 
-    <div class="sm:col-span-2">
+    {% comment %}
+      The trip fields are required only as the hero's step-1 gate (two_step): the
+      server accepts a request without them, so /bookings/ and /contact/ do too.
+    {% endcomment %}
+    <div class="fv sm:col-span-2">
+      {% if two_step %}
+      {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value fv_message="Enter a pickup address." %}
+      {% else %}
       {% include "components/address_autocomplete.html" with name="pickup" field_id="bw-pickup" label="Pickup location" value=form.pickup.value flight=1 airport=form.pickup_airport.value airline_selected=form.pickup_airline.value flight_value=form.pickup_flight.value %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup" x-text="errors.pickup"></p>
-      {% for error in form.pickup_airport.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      {% for error in form.pickup_flight.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      {% for error in form.pickup_airline.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      {% endif %}
+      {% for error in form.pickup_airport.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
+      {% for error in form.pickup_flight.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
+      {% for error in form.pickup_airline.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
     </div>
 
     {% comment %}
@@ -124,7 +131,7 @@
       </template>
       <input type="hidden" name="stops_json" :value="json()">
 
-      <div class="sm:col-span-2">
+      <div class="fv sm:col-span-2">
         <div class="mb-1 flex items-center justify-between gap-3">
           <label for="bw-dropoff" class="!mb-0 block text-[12px] font-medium text-muted">Drop-off location</label>
           <button type="button" @click="add()" x-show="canAdd()"
@@ -132,39 +139,47 @@
             {% icon "plus" class="h-[13px] w-[13px]" %} Add a stop
           </button>
         </div>
+        {% if two_step %}
+        {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value hide_label=1 flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value fv_message="Enter a drop-off address." %}
+        {% else %}
         {% include "components/address_autocomplete.html" with name="dropoff" field_id="bw-dropoff" label="Drop-off location" value=form.dropoff.value hide_label=1 flight=1 airport=form.dropoff_airport.value airline_selected=form.dropoff_airline.value flight_value=form.dropoff_flight.value %}
-        <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.dropoff" x-text="errors.dropoff"></p>
-        {% for error in form.dropoff_airport.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-        {% for error in form.dropoff_flight.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-        {% for error in form.dropoff_airline.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+        {% endif %}
+        {% for error in form.dropoff_airport.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
+        {% for error in form.dropoff_flight.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
+        {% for error in form.dropoff_airline.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
       </div>
     </div>
 
-    <div>
+    <div class="fv">
       <label for="bw-pickup-date" class="mb-1 block text-[12px] font-medium text-muted">Pickup date</label>
       <input type="text" id="bw-pickup-date" name="pickup_date" data-flatpickr
              value="{{ form.pickup_date.value|default:'' }}" placeholder="Select a date"
-             class="field w-full{% if form.pickup_date.errors %} field-error{% endif %}">
-      {% for error in form.pickup_date.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup_date" x-text="errors.pickup_date"></p>
+             data-fv {% if two_step %}data-pristine-required data-pristine-required-message="Pick a date."{% endif %}
+             {% if form.pickup_date.errors %}aria-invalid="true" aria-describedby="error-bw-pickup-date"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-pickup-date" errors=form.pickup_date.errors %}
     </div>
 
-    <div>
+    <div class="fv">
       <label for="bw-pickup-time" class="mb-1 block text-[12px] font-medium text-muted">Pickup time</label>
       <input type="text" id="bw-pickup-time" name="pickup_time" data-flatpickr-time
              value="{{ form.pickup_time.value|default:'' }}" placeholder="Select a time"
-             class="field w-full{% if form.pickup_time.errors %} field-error{% endif %}">
-      {% for error in form.pickup_time.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.pickup_time" x-text="errors.pickup_time"></p>
+             data-fv {% if two_step %}data-pristine-required data-pristine-required-message="Pick a time."{% endif %}
+             {% if form.pickup_time.errors %}aria-invalid="true" aria-describedby="error-bw-pickup-time"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-pickup-time" errors=form.pickup_time.errors %}
     </div>
 
-    <div>
+    <div class="fv">
       <label for="bw-passengers" class="mb-1 block text-[12px] font-medium text-muted">Passengers</label>
       <input type="number" id="bw-passengers" name="passengers" min="1" max="100"
              value="{{ form.passengers.value|default:1 }}"
-             class="field w-full{% if form.passengers.errors %} field-error{% endif %}">
-      {% for error in form.passengers.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.passengers" x-text="errors.passengers"></p>
+             data-fv data-pristine-required data-pristine-required-message="How many passengers?"
+             data-pristine-min-message="Between 1 and 100 passengers."
+             data-pristine-max-message="Between 1 and 100 passengers."
+             {% if form.passengers.errors %}aria-invalid="true" aria-describedby="error-bw-passengers"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-passengers" errors=form.passengers.errors %}
     </div>
 
     {% comment %}
@@ -172,13 +187,17 @@
       the seventh control adds no vertical height at >=640px. With no JS it stays
       visible: the server nulls it for transfers, so showing it is harmless.
     {% endcomment %}
-    <div x-show="tripType === 'hourly'">
+    <div class="fv" x-show="tripType === 'hourly'">
       <label for="bw-hours" class="mb-1 block text-[12px] font-medium text-muted">Hours</label>
+      {% comment %} data-pristine-required, never `required`: the field stays visible with no JS, and a transfer must still post. {% endcomment %}
       <input type="number" id="bw-hours" name="hours" min="1" max="24" step="1"
              value="{{ form.hours.value|default:'' }}" placeholder="4"
-             class="field w-full{% if form.hours.errors %} field-error{% endif %}">
-      {% for error in form.hours.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
-      <p class="mt-1 text-[11.5px] text-rose-600" x-show="errors.hours" x-text="errors.hours"></p>
+             data-fv data-pristine-required data-pristine-required-message="Enter how many hours you need."
+             data-pristine-min-message="Between 1 and 24 hours."
+             data-pristine-max-message="Between 1 and 24 hours."
+             {% if form.hours.errors %}aria-invalid="true" aria-describedby="error-bw-hours"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-hours" errors=form.hours.errors %}
     </div>
 
   </fieldset>
@@ -197,38 +216,44 @@
       </div>
     </div>
 
-    <div class="sm:col-span-2">
+    <div class="fv sm:col-span-2">
       <label for="bw-name" class="mb-1 block text-[12px] font-medium text-muted">Full name</label>
       <input type="text" id="bw-name" name="name" value="{{ form.name.value|default:'' }}"
              required autocomplete="name" placeholder="Jane Rider"
-             class="field w-full{% if form.name.errors %} field-error{% endif %}">
-      {% for error in form.name.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+             data-fv data-pristine-required-message="Tell us your name."
+             {% if form.name.errors %}aria-invalid="true" aria-describedby="error-bw-name"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-name" errors=form.name.errors %}
     </div>
 
-    <div>
+    <div class="fv">
       <label for="bw-email" class="mb-1 block text-[12px] font-medium text-muted">Email</label>
       <input type="email" id="bw-email" name="email" value="{{ form.email.value|default:'' }}"
              required autocomplete="email" placeholder="you@example.com"
-             class="field w-full{% if form.email.errors %} field-error{% endif %}">
-      {% for error in form.email.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+             data-fv data-pristine-required-message="We need your email to send your quote."
+             data-pristine-email-message="Add the rest of your email, like jane@gmail.com."
+             {% if form.email.errors %}aria-invalid="true" aria-describedby="error-bw-email"{% endif %}
+             class="field w-full">
+      {% include "components/field_error.html" with field_id="bw-email" errors=form.email.errors %}
     </div>
 
-    <div>
-      {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone (optional)" value=form.phone.value %}
-      {% for error in form.phone.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+    <div class="fv">
+      {% include "components/phone_input.html" with name="phone" field_id="bw-phone" label="Phone (optional)" value=form.phone.value fv=1 invalid=form.phone.errors %}
+      {% include "components/field_error.html" with field_id="bw-phone" errors=form.phone.errors %}
     </div>
 
     <div class="sm:col-span-2">
       <label for="bw-service" class="mb-1 block text-[12px] font-medium text-muted">Occasion <span class="text-muted/70">(optional)</span></label>
       {% include "components/searchable_select.html" with name="service_type" field_id="bw-service" options=occasion_options selected=form.service_type.value empty_label="Select an occasion" search="off" %}
-      {% for error in form.service_type.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+      {% for error in form.service_type.errors %}<p class="fv-msg">{{ error }}</p>{% endfor %}
     </div>
 
-    <div class="sm:col-span-2">
+    <div class="fv sm:col-span-2">
       <label for="bw-notes" class="mb-1 block text-[12px] font-medium text-muted">Trip details <span class="text-muted/70">(optional)</span></label>
       <textarea id="bw-notes" name="notes" rows="3" data-autogrow placeholder="Flight number, occasion, anything we should know…"
-                class="field w-full{% if form.notes.errors %} field-error{% endif %}">{{ form.notes.value|default:'' }}</textarea>
-      {% for error in form.notes.errors %}<p class="mt-1 text-[11.5px] text-rose-600">{{ error }}</p>{% endfor %}
+                {% if form.notes.errors %}aria-invalid="true" aria-describedby="error-bw-notes"{% endif %}
+                class="field w-full">{{ form.notes.value|default:'' }}</textarea>
+      {% include "components/field_error.html" with field_id="bw-notes" errors=form.notes.errors %}
     </div>
 
   </fieldset>

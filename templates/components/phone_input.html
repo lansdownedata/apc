@@ -9,11 +9,16 @@ Params:
   value      — current value (edit forms)
   required   — truthy to mark required
   placeholder — optional; omitted → intl-tel-input auto-fills a real example number
+  fv         — truthy on a public form: the number is checked inline by publicForm()
+               (static/js/app.js) instead of by the submit-time toast
+  invalid    — truthy when the server rejected it; links components/field_error.html
 {% endcomment %}
 <div>
   {% if label != "" %}<label for="{{ field_id }}" class="block text-[12px] font-medium text-muted mb-1">{{ label|default:"Phone" }}</label>{% endif %}
   <input id="{{ field_id }}" name="{{ name }}" type="tel" autocomplete="tel" data-phone
          {% if required %}required{% endif %}
+         {% if fv %}data-fv data-pristine-phone{% endif %}
+         {% if invalid %}aria-invalid="true" aria-describedby="error-{{ field_id }}"{% endif %}
          value="{{ value|default:'' }}"
          {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
          class="field w-full">
