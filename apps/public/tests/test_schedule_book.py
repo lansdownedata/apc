@@ -211,6 +211,14 @@ def test_a_missing_name_or_email_is_refused():
     assert _post(email="not-an-email")[0].status_code == 400
 
 
+@pytest.mark.parametrize("email", ["jane@", "jane@gmail", "@gmail.com", "jane @gmail.com"])
+def test_an_incomplete_email_is_refused_before_calendly(email):
+    resp, create = _post(email=email)
+    assert resp.status_code == 400
+    assert "email" in resp.json()["errors"]
+    create.assert_not_called()
+
+
 def test_a_start_time_that_is_not_a_timestamp_is_refused():
     resp, create = _post(start_time="tomorrow-ish")
     assert resp.status_code == 400

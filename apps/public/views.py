@@ -8,7 +8,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.core.signing import BadSignature, SignatureExpired
+from django.core.validators import validate_email
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -698,7 +700,11 @@ def _booking_errors(*, name: str, email: str, phone: str, start) -> dict[str, st
     errors = {}
     if not name:
         errors["name"] = "Tell us your name."
-    if not email or "@" not in email:
+    try:
+        # The same validator a Django EmailField uses, so this endpoint agrees with the
+        # booking and wedding forms on what counts as an address.
+        validate_email(email)
+    except ValidationError:
         errors["email"] = "We need a valid email for the calendar invite."
     if not phone:
         # Phone becomes location.location — the number the host dials. Calendly's own
