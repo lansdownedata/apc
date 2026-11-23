@@ -132,7 +132,7 @@ class ServiceTypeForm(forms.ModelForm):
 _NUM = {"class": "field w-full", "min": 0}
 _CHECK = {"class": "rounded focus-visible:ring-2 focus-visible:ring-gold disabled:opacity-50"}
 _AREA = {"class": "field w-full", "rows": 3}
-_TIME = {"class": "field w-full", "type": "time"}
+_TIME = {"class": "field w-full", "data-flatpickr-time": ""}
 
 
 class DispatchAlertConfigForm(forms.ModelForm):
@@ -255,7 +255,6 @@ class TaskConfigForm(forms.ModelForm):
             "airport_international_grace_minutes": forms.NumberInput(attrs=_NUM),
             "overtime_block_minutes": forms.NumberInput(attrs=_NUM),
             "hold_enabled": forms.CheckboxInput(attrs=_CHECK),
-            # A native time input is fine here: it is not an option picker (CLAUDE.md).
             "hold_place_time": forms.TimeInput(attrs=_TIME, format="%H:%M"),
             "hold_lead_hours": forms.NumberInput(attrs=_NUM | {"max": 24}),
             "hold_release_days": forms.NumberInput(attrs=_NUM),

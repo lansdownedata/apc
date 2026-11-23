@@ -4477,16 +4477,19 @@ window.initPhoneInputs = initPhoneInputs;
  * Escape inside a picker must not also close the dialog around it. flatpickr's own
  * Escape handler sits on document and runs before any window listener, so by the
  * time a modal sees the key its calendar is already shut and undetectable — stamp
- * the close instead, and let the modal ask whether one just happened. */
+ * the close instead, and let the modal ask whether one just happened.
+ *
+ * `disableMobile`: left to itself flatpickr swaps in the browser's native date/time
+ * input on any phone or tablet, so customers saw the OS calendar on the wedding form.
+ * Every date and time in the app uses this calendar, on every device. */
 let fpClosedAt = 0;
-const FP_BASE = { onClose: () => { fpClosedAt = Date.now(); } };
+const FP_BASE = { disableMobile: true, onClose: () => { fpClosedAt = Date.now(); } };
 window.fpJustClosed = () => Date.now() - fpClosedAt < 250;
 
 /* A calendar closes itself the moment you click a day; the time row has no such
  * gesture — nudging hours and minutes never ends, so Escape or a click outside was
  * the only way out and agents sat there looking for the exit. Give every time picker
- * an explicit Done. Mobile takes the OS picker instead (`setupMobile` skips build(),
- * so there is no calendarContainer to append to) — onReady still fires there. */
+ * an explicit Done. */
 function fpAddDone(fp) {
   const panel = fp.calendarContainer;
   if (!panel || panel.querySelector(".fp-done")) return;
