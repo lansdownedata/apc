@@ -4451,7 +4451,8 @@ document.addEventListener("submit", (e) => {
   if (!form.querySelectorAll) return;
   // The public forms show a bad number inline (publicForm, below) and have already
   // stopped the post; they only need the rewrite, and only when the post goes ahead.
-  const inline = form.hasAttribute("data-fv-form");
+  // Without Pristine (CDN down) nothing checked it, so they fall back to the toast.
+  const inline = form.hasAttribute("data-fv-form") && !!window.Pristine;
   if (inline && e.defaultPrevented) return;
   form.querySelectorAll("input[data-phone]").forEach((el) => {
     if (!phoneIsValid(el)) {
@@ -4513,11 +4514,12 @@ function fvVisible(el) {
 
 /**
  * Validation for one public form. `check(fields)` is each form's Next/Submit gate,
- * `serverError(el, message)` shows a message the server sent back as JSON.
- * Without Pristine (CDN down) every check passes and the server still validates.
+ * `serverError(el, message)` shows a message the server sent back as JSON and says
+ * whether it could. Without Pristine (CDN down) every check passes, the server still
+ * validates, and serverError() returns false so the caller shows the message itself.
  */
 function publicForm(root) {
-  if (!window.Pristine) return { check: () => true, serverError() {}, visible: fvVisible };
+  if (!window.Pristine) return { check: () => true, serverError: () => false, visible: fvVisible };
   let pristine = null;
 
   // Built on first use rather than in Alpine's init(): Alpine starts before flatpickr and
@@ -4557,15 +4559,23 @@ function publicForm(root) {
     }
   }
 
-  // Leaving a field checks it, once the visitor has typed in it.
+  // Leaving a field checks it, once the visitor has typed in it. intl-tel-input's flag
+  // button and country search sit inside the phone's `.iti` wrapper: moving between
+  // them is still the phone field (choosing the country is how a wrong number gets
+  // fixed), so it is checked only when focus leaves the wrapper altogether.
   function onLeave(e) {
     build();
-    const field = fieldFor(e.target);
-    if (field && field.dataset.fvTyped) pristine.validate(field);
+    const wrap = e.target.closest && e.target.closest(".iti");
+    const field = fieldFor(e.target) || (wrap && fieldFor(wrap.querySelector("input[data-fv-field]")));
+    if (!field || !field.dataset.fvTyped) return;
+    if (wrap && e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+    pristine.validate(field);
   }
 
   root.addEventListener("input", onEdit);
   root.addEventListener("change", onEdit);
+  // A new country can make the typed number valid without a keystroke.
+  root.addEventListener("countrychange", onEdit);
   root.addEventListener("focusout", onLeave);
 
   return {
@@ -4587,6 +4597,7 @@ function publicForm(root) {
       const field = fvVisible(el);
       field.pristine.errors = [];
       pristine.addError(field, message);
+      return true;
     },
     visible: fvVisible,
   };
@@ -6328,11 +6339,14 @@ function scheduleBooking(opts = {}) {
       const [name, email, phone] = this.contactFields();
       const fields = { name, email, phone };
       const mapped = {};
+      const unplaced = [];
       for (const [key, value] of Object.entries(errors)) {
         const message = Array.isArray(value) ? value.join(" ") : value;
-        if (fields[key]) this.fv.serverError(fields[key], message);
-        else mapped[key] = message;
+        if (!fields[key]) mapped[key] = message;
+        else if (!this.fv.serverError(fields[key], message)) unplaced.push(message);
       }
+      // No validation library, so no slot under those fields: say it in the footer.
+      if (unplaced.length) this.notice = unplaced.join(" ");
       return mapped;
     },
   };
